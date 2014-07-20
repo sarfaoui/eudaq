@@ -1,17 +1,19 @@
 OBJS = tmp/main.o tmp/Keithley.o tmp/Keithley2000.o  tmp/Keithley2410.o
+LOBJS= tmp/Keithley.o tmp/Keithley2000.o  tmp/Keithley2410.o
 SRC = src/Keithley.cpp src/Keithley2000.cpp src/Keithley2410.cpp
 CC = g++ -D_REENTRANT -g -O2
-CFLAGS =-c 
-LFLAGS =  -L/usr/local/lib  -lpthread 
-IFLAGS=-I./include -I/usr/local/include
+CFLAGS =-c -fPIC
+LIBGPIB=/afs/cern.ch/eng/clic/TBData/software/ROOT6_gcc48_python2.7/libgpib
+LFLAGS =  -L$(LIBGPIB)/lib  -lpthread 
+IFLAGS=-I./include -I$(LIBGPIB)/include
 
 all : $(OBJS) 
-	$(CC) $(LFLAGS) $(IFLAGS) $(OBJS)  -o GPIB_Reader /usr/local/lib/libgpib.so
+	$(CC) $(LFLAGS) $(IFLAGS) $(OBJS)  -o GPIB_Reader $(LIBGPIB)/lib/libgpib.so
 
 lib :  lib/libKeithley.so
 
-lib/libKeithley.so : $(OBJ) 
-	$(CC) $(IFLAGS) -fPIC -shared -o lib/libKeithley.so  $(OBJS) 
+lib/libKeithley.so : $(OBJ) $(SRC)
+	$(CC) $(IFLAGS) -fPIC -shared -o lib/libKeithley.so  $(LOBJS) 
 
 tmp/main.o : src/main.cxx 
 	$(CC) $(CFLAGS) $(IFLAGS) src/main.cxx -o tmp/main.o 
