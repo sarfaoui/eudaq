@@ -1,5 +1,7 @@
 #include "MIMTLU.h"
 #include <time.h>
+#include <pthread.h>
+#include <unistd.h>
 
 extern time_t t0 ;
 using namespace std;

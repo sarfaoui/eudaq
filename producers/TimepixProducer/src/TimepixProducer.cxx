@@ -8,6 +8,8 @@
  */
 
 //#define USE_KEITHLEY
+__asm__(".symver memcpy,memcpy@GLIBC_2.2.5");
+
 #define KEITHLEYDEBUG
 
 #include "eudaq/Producer.hh"
@@ -29,6 +31,7 @@
 #include "TimepixDevice.h"
 #include <time.h>
 
+#define USE_KEITHLEY
 #ifdef USE_KEITHLEY
 #include "Keithley2000.h"
 #include "Keithley2410.h"
