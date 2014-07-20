@@ -4,3 +4,4 @@ export LCGEXTERNAL=/afs/cern.ch/sw/lcg/external
 export CMAKE_HOME=$LCGEXTERNAL/CMake/2.8.8/x86_64-slc6-gcc46-opt
 export CMAKE_HOME=$LCGEXTERNAL/CMake/2.8.9/Linux-i386
 export PATH=${CMAKE_HOME}/bin:$PATH
+export CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH:$ROOTSYS
