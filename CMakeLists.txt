@@ -6,7 +6,7 @@ PROJECT( EUDAQ )
 
 # project version
 SET( ${PROJECT_NAME}_VERSION_MAJOR 1 )
-SET( ${PROJECT_NAME}_VERSION_MINOR 3 )
+SET( ${PROJECT_NAME}_VERSION_MINOR 4 )
 SET( ${PROJECT_NAME}_VERSION_PATCH 0 )
 
 LIST ( APPEND CMAKE_CXX_FLAGS "-fPIC -O2 -ggdb" )
@@ -28,19 +28,25 @@ IF(NOT SOURCE_PACKAGE)
   # Get the version from last git tag plus numer of additional commits:
   FIND_PACKAGE(Git QUIET)
   IF(GIT_FOUND)
-    EXEC_PROGRAM(${GIT_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR} ARGS describe --tags HEAD OUTPUT_VARIABLE EUDAQ_LIB_VERSION)
-    STRING(REGEX REPLACE "([v0-9.]+[-a-zA-Z0-9]+)-([0-9]+)-([A-Za-z0-9]+)" "\\1+\\2~\\3" EUDAQ_LIB_VERSION ${EUDAQ_LIB_VERSION})
-    STRING(REGEX REPLACE "v([v0-9.]+)(.*)" "\\1" EUDAQ_LIB_BASEVERSION ${EUDAQ_LIB_VERSION})
-    IF("${EUDAQ_LIB_BASEVERSION}" VERSION_LESS "${EUDAQ_VERSION_MAJOR}.${EUDAQ_VERSION_MINOR}.${EUDAQ_VERSION_PATCH}")
-      MESSAGE(WARNING "Your do not seem to have fetched the latest tags in your git repository -- please consider running 'git fetch upstream'")
-    ENDIF("${EUDAQ_LIB_BASEVERSION}" VERSION_LESS "${EUDAQ_VERSION_MAJOR}.${EUDAQ_VERSION_MINOR}.${EUDAQ_VERSION_PATCH}")
-    EXEC_PROGRAM(git ARGS status --porcelain ${CMAKE_CURRENT_SOURCE_DIR}/main OUTPUT_VARIABLE EUDAQ_MAIN_STATUS)
-    IF(EUDAQ_MAIN_STATUS STREQUAL "")
-      MESSAGE(STATUS "Main EUDAQ library directory is clean (all changes have been commited).")
-    ELSE(EUDAQ_MAIN_STATUS STREQUAL "")
-      MESSAGE(STATUS "Main EUDAQ library directory is dirty (uncommitted changes present):\n ${EUDAQ_MAIN_STATUS}.")
-      SET(EUDAQ_LIB_VERSION "${EUDAQ_LIB_VERSION}*")
-    ENDIF(EUDAQ_MAIN_STATUS STREQUAL "")
+    EXECUTE_PROCESS(COMMAND ${GIT_EXECUTABLE} describe --tags HEAD WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} OUTPUT_VARIABLE EUDAQ_LIB_VERSION ERROR_VARIABLE GIT_ERROR)
+    IF(GIT_ERROR) # git execution resulted in error message -- cannot trust result but construct version from hard-set variable
+      MESSAGE(WARNING "Could not determine EUDAQ version from git -- git execution resulted in error: ${GIT_ERROR}")
+      SET(EUDAQ_LIB_VERSION ${EUDAQ_VERSION_MAJOR}.${EUDAQ_VERSION_MINOR}.${EUDAQ_VERSION_PATCH})
+    ELSE(GIT_ERROR)
+      STRING(REGEX REPLACE "([v0-9.]+[-a-zA-Z0-9]+)-([0-9]+)-([A-Za-z0-9]+)" "\\1+\\2~\\3" EUDAQ_LIB_VERSION ${EUDAQ_LIB_VERSION})
+      STRING(REGEX REPLACE "\n" "" EUDAQ_LIB_VERSION ${EUDAQ_LIB_VERSION}) # remove potential line breaks
+      STRING(REGEX REPLACE "v([v0-9.]+)(.*)" "\\1" EUDAQ_LIB_BASEVERSION ${EUDAQ_LIB_VERSION})
+      IF("${EUDAQ_LIB_BASEVERSION}" VERSION_LESS "${EUDAQ_VERSION_MAJOR}.${EUDAQ_VERSION_MINOR}.${EUDAQ_VERSION_PATCH}")
+	MESSAGE(WARNING "Your do not seem to have fetched the latest tags in your git repository -- please consider running 'git fetch upstream'")
+      ENDIF("${EUDAQ_LIB_BASEVERSION}" VERSION_LESS "${EUDAQ_VERSION_MAJOR}.${EUDAQ_VERSION_MINOR}.${EUDAQ_VERSION_PATCH}")
+      EXEC_PROGRAM(git ARGS status --porcelain ${CMAKE_CURRENT_SOURCE_DIR}/main OUTPUT_VARIABLE EUDAQ_MAIN_STATUS)
+      IF(EUDAQ_MAIN_STATUS STREQUAL "")
+	MESSAGE(STATUS "Main EUDAQ library directory is clean (all changes have been commited).")
+      ELSE(EUDAQ_MAIN_STATUS STREQUAL "")
+	MESSAGE(STATUS "Main EUDAQ library directory is dirty (uncommitted changes present):\n ${EUDAQ_MAIN_STATUS}.")
+	SET(EUDAQ_LIB_VERSION ${EUDAQ_LIB_VERSION}*)
+      ENDIF(EUDAQ_MAIN_STATUS STREQUAL "")
+    ENDIF(GIT_ERROR)
   ELSE(GIT_FOUND)
     # If we don't have git we take the hard-set version.
     SET(EUDAQ_LIB_VERSION ${EUDAQ_VERSION_MAJOR}.${EUDAQ_VERSION_MINOR}.${EUDAQ_VERSION_PATCH})
@@ -77,9 +83,14 @@ IF(BUILD_nreader)
   FIND_PACKAGE(LCIO REQUIRED)
   INCLUDE_DIRECTORIES(${LCIO_INCLUDE_DIRS})
   FIND_PACKAGE(EUTelescope REQUIRED)
-  INCLUDE_DIRECTORIES(${EUTELESCOPE_INCLUDE_DIRS})
+  INCLUDE_DIRECTORIES(${EUTELESCOPE_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/nreader/include)
   add_definitions(${EUTELESCOPE_DEFINITIONS} ${LCIO_DEFINITIONS})
-  set(ADDITIONAL_LIBRARIES ${EUTELESCOPE_LIBRARIES})
+  AUX_SOURCE_DIRECTORY( ${PROJECT_SOURCE_DIR}/nreader/detdescription detdescr_library_sources )
+  ADD_LIBRARY( DetectorDescriptons SHARED ${detdescr_library_sources} )
+  INSTALL(TARGETS DetectorDescriptons RUNTIME DESTINATION bin
+                                      LIBRARY DESTINATION lib
+                                      ARCHIVE DESTINATION lib)
+  set(ADDITIONAL_LIBRARIES ${EUTELESCOPE_LIBRARIES} DetectorDescriptons)
 ENDIF()
 
 
@@ -139,8 +150,16 @@ ENDIF()
 # build OnlineMon executable
 option(BUILD_onlinemon "Compile Online Monitor executable (requires ROOT)?" ON)
 IF(BUILD_onlinemon)
-  add_subdirectory(onlinemon)
+  add_subdirectory(monitors/onlinemon)
 ENDIF()
+
+
+# build Offline Monitor
+option(BUILD_offlinemon "Compile Offline Monitor executable (requires ROOT)?" OFF)
+IF(BUILD_offlinemon)
+  add_subdirectory(monitors/offlinemon)
+ENDIF()
+
 
 
 ###############################################
@@ -186,6 +205,9 @@ include(PrintSystemInformation)
 # through CMake/CTest; for more detailed information see the CMake manual or
 #web page (http://www.cmake.org/Wiki/CMake/Testing_With_CTest).
 if (${CMAKE_VERSION} VERSION_GREATER 2.8)
+  # git support only available with CMake greater 2.8
+  ENABLE_TESTING()
+  INCLUDE(CTest)
   FIND_PACKAGE(PythonInterp)
   IF(PYTHONINTERP_FOUND AND BUILD_python)
     # test for numpy package
@@ -194,8 +216,6 @@ if (${CMAKE_VERSION} VERSION_GREATER 2.8)
       MESSAGE(WARNING "Python interpreter found but 'numpy' package not available -- cannot use either Python wrapper nor regression tests.")
     ELSE(NUMPYRC EQUAL 1)
       MESSAGE(STATUS "Found Python with installed numpy package -- making regression tests available through CTest")
-      ENABLE_TESTING()
-      INCLUDE(CTest)
       INCLUDE(etc/tests/testing.cmake)
     ENDIF(NUMPYRC EQUAL 1)
   ENDIF(PYTHONINTERP_FOUND AND BUILD_python)

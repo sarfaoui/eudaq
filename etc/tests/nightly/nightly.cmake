@@ -1,9 +1,14 @@
 find_program(CTEST_GIT_COMMAND NAMES git)
 
-set(CTEST_BUILD_CONFIGURATION "Release")
 set(CTEST_CONFIGURATION_TYPE "Release")
 
-set(CTEST_BUILD_OPTIONS "-DBUILD_allproducer=ON -D ReferenceDataDir=${ReferenceDataDir}")
+set(CTEST_BUILD_OPTIONS "-DBUILD_allproducer=ON  -DBUILD_onlinemon=ON -DBUILD_offlinemon=ON -D ReferenceDataDir=${ReferenceDataDir}")
+
+# increase the maximum number of warnings reported by ctest from the default 50
+set (CTEST_CUSTOM_MAXIMUM_NUMBER_OF_WARNINGS 150)
+
+# set variables that describe the tests in the CDash interface
+set(CTEST_BUILD_NAME "Nightly-${CTEST_CONFIGURATION_TYPE}")
 
 # valgrind is used for memchecks
 find_program(CTEST_MEMORYCHECK_COMMAND NAMES valgrind)
