@@ -4,7 +4,6 @@
 #include "eudaq/Timer.hh"
 #include "eudaq/Utils.hh"
 #include "eudaq/OptionParser.hh"
-#include "eudaq/ExampleHardware.hh"
 #include <iostream>
 #include <ostream>
 #include <vector>
@@ -22,7 +21,7 @@ using namespace std;
  
 // A name to identify the raw data format of the events generated
 // Modify this to something appropriate for your producer.
-static const std::string EVENT_TYPE = "Timepix3";
+static const std::string EVENT_TYPE = "Timepix3Raw";
 
 // Declare a new class that inherits from eudaq::Producer
 class Timepix3Producer : public eudaq::Producer {
@@ -36,7 +35,7 @@ class Timepix3Producer : public eudaq::Producer {
   // and the runcontrol connection string, and initialize any member variables.
   Timepix3Producer(const std::string & name, const std::string & runcontrol)
     : eudaq::Producer(name, runcontrol),
-      m_run(0), m_ev(0), stopping(false), done(false),started(0) {
+      m_run(0), m_ev(0), stopping(false), done(false), started(0) {
 
     myTimepix3Config = new Timepix3Config();
 
@@ -137,7 +136,7 @@ class Timepix3Producer : public eudaq::Producer {
       
       } else if( name == "GeneralConfig" ) {
 	if ( !spidrctrl->setGenConfig( device_nr, val ) ) {
-	  cout << "Error, could not set General Config to " << val << endl;
+	  error_out( "###setGenConfig" );
 	} else {
 	  int config = -1;
 	  spidrctrl->getGenConfig( device_nr, &config );
@@ -148,7 +147,7 @@ class Timepix3Producer : public eudaq::Producer {
       }
     }
     
-    // Guess what this does?
+    // Reset entire matrix config to zeroes
     spidrctrl->resetPixelConfig();
 
     // Set per-pixel thresholds from XML
@@ -161,9 +160,9 @@ class Timepix3Producer : public eudaq::Producer {
       }
     }
     if( !pixfail ) {
-      cout << "Successfully set pixel thresholds." << endl;
+      cout << "Successfully built pixel thresholds." << endl;
     } else {
-      cout << "Something went wrong setting pixel thresholds." << endl;
+      cout << "Something went wrong building pixel thresholds." << endl;
     }
 
     // Set pixel mask from XML
@@ -176,36 +175,59 @@ class Timepix3Producer : public eudaq::Producer {
       }
     }
     if( !maskfail ) {
-      cout << "Successfully set pixel mask." << endl;
+      cout << "Successfully built pixel mask." << endl;
     } else {
-      cout << "Something went wrong setting pixel mask." << endl;
+      cout << "Something went wrong building pixel mask." << endl;
     }
 
     // Actually set the pixel thresholds and mask
     if( !spidrctrl->setPixelConfig( device_nr ) ) {
-      cout << "Sucessfully set pixel configuration." << endl;
+      error_out( "###setPixelConfig" );
     } else {
-      cout << "Something went wrong setting pixel configuration." << endl;
+      cout << "Successfully set pixel configuration." << endl;
+    }
+    unsigned char *pixconf = spidrctrl->pixelConfig();
+    int x, y, cnt = 0;
+    if( spidrctrl->getPixelConfig( device_nr ) ) {
+      for( y = 0; y < NPIXY; ++y ) {
+	for( x = 0; x < NPIXX; ++x ) {
+	  std::bitset<6> bitconf( (unsigned int) pixconf[y*256+x] );
+	  //if( pixconf[y*256+x] != 0 ) {
+	  if ( bitconf.test(0) ) { /* masked? */
+	    //cout << x << ',' << y << ": " << bitconf << endl; // hex << setw(2) << setfill('0') << (unsigned int) pixconf[y*256+x] << dec << endl;
+	    ++cnt;
+	  }
+	}
+      }
+      cout << "Pixels masked = " << cnt << endl;
+    } else {
+      cout << "###getPixelConfig: " << spidrctrl->errorString() << endl;
     }
     
     // Keithley stuff
-    // cout << endl;
-    // int gpib_num = config.Get( "Keithley_GPIB", 18 );
-    // k2450 = new Keithley2450( gpib_num );
-    // double v_bias = config.Get( "V_Bias", 0. );
-    // double i_lim = config.Get( "I_Limit", 1e-6 );
-    // k2450->OutputOff();
-    // sleep(1);
-    // k2450->SetMeasureCurrent();
-    // sleep(1);
-    // k2450->SetSourceVoltage4W();
-    // sleep(1);
-    // k2450->SetOutputVoltage( v_bias );
-    // sleep(1);
-    // k2450->SetOutputVoltageCurrentLimit( i_lim );
-    // sleep(1);
-    // k2450->OutputOn();
-    
+    int use_k2450 = config.Get( "USE_Keithley", 0 );
+    if( use_k2450 == 1 ) {
+      cout << endl;
+      int gpib_num = config.Get( "Keithley_GPIB", 18 );
+      k2450 = new Keithley2450( gpib_num );
+      double v_bias = config.Get( "V_Bias", 0. );
+      double i_lim = config.Get( "I_Limit", 1e-6 );
+      k2450->OutputOff();
+      sleep(1);
+      k2450->SetMeasureCurrent();
+      sleep(1);
+      k2450->SetSourceVoltage4W();
+      sleep(1);
+      k2450->SetOutputVoltage( v_bias );
+      sleep(1);
+      k2450->SetOutputVoltageCurrentLimit( i_lim );
+      sleep(1);
+      k2450->OutputOn();
+    }
+
+    // Create SpidrDaq for later (best place to do it?)
+    spidrdaq = new SpidrDaq( spidrctrl );
+
     // At the end, set the status that will be displayed in the Run Control.
     SetStatus(eudaq::Status::LVL_OK, "Configured (" + config.Name() + ")");
   }
@@ -226,7 +248,7 @@ class Timepix3Producer : public eudaq::Producer {
     eudaq::RawDataEvent bore(eudaq::RawDataEvent::BORE(EVENT_TYPE, m_run));
     // You can set tags on the BORE that will be saved in the data file
     // and can be used later to help decoding
-    bore.SetTag("EXAMPLE", eudaq::to_string(m_exampleparam));
+    bore.SetTag( "XMLConfig", eudaq::to_string( m_xmlfileName ) );
     // Send the event to the Data Collector
     SendEvent(bore);
     
@@ -253,7 +275,7 @@ class Timepix3Producer : public eudaq::Producer {
     
     // Send an EORE after all the real events have been sent
     // You can also set tags on it (as with the BORE) if necessary
-    SendEvent(eudaq::RawDataEvent::EORE("Test", m_run, ++m_ev));
+    SendEvent(eudaq::RawDataEvent::EORE(EVENT_TYPE, m_run, ++m_ev));
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -274,43 +296,62 @@ class Timepix3Producer : public eudaq::Producer {
   // This is just an example, adapt it to your hardware
   void ReadoutLoop() {
     // Loop until Run Control tells us to terminate
-    while (!done) {
-      if (!hardware.EventsPending()) {
-	// No events are pending, so check if the run is stopping
-	if (stopping) {
-	  // if so, signal that there are no events left
-	  stopping = false;
-	}
+    while( !done ) {
+      if( stopping ) {
+	cout << "Stopping..." << endl;
+	// if so, signal that there are no events left
+	stopping = false;
+      }
+      // Now sleep for a bit, to prevent chewing up all the CPU
+      //eudaq::mSleep( 20 );
+      // Then restart the loop
+      //continue;
+      if( !started ) {
+	//cout << "Not started." << endl;
 	// Now sleep for a bit, to prevent chewing up all the CPU
-	eudaq::mSleep(20);
+	eudaq::mSleep( 20 );
 	// Then restart the loop
 	continue;
       }
-      if (!started)
-	{
-	  // Now sleep for a bit, to prevent chewing up all the CPU
-	  eudaq::mSleep(20);
-	  // Then restart the loop
-	  continue;
-	}
       // If we get here, there must be data to read out
       // Create a RawDataEvent to contain the event data to be sent
-      eudaq::RawDataEvent ev(EVENT_TYPE, m_run, m_ev);
+      // eudaq::RawDataEvent ev(EVENT_TYPE, m_run, m_ev);
       
-      for (unsigned plane = 0; plane < hardware.NumSensors(); ++plane) {
-	// Read out a block of raw data from the hardware
-	std::vector<unsigned char> buffer = hardware.ReadSensor(plane);
-	// Each data block has an ID that is used for ordering the planes later
-	// If there are multiple sensors, they should be numbered incrementally
-	
-	// Add the block of raw data to the event
-	ev.AddBlock(plane, buffer);
+      // Set Timepix3 into acquisition mode
+      if( !spidrctrl->datadrivenReadout() ) error_out( "###datadrivenReadout" );
+        
+      // Sample pixel data
+      spidrdaq->setSampling( true );
+      
+      // Configure the shutter trigger
+      if( !spidrctrl->openShutter() ) error_out( "###openShutter" );
+            
+      while( !stopping ) {
+      
+	int cnt = 0, size, x, y, pixdata, timestamp;
+	bool next_sample = true;
+	//while( next_sample ) {
+	// Get a sample of (at most) 1000 pixel data packets, waiting up to 3 s for it
+	next_sample = spidrdaq->getSample( 1, 3000 );
+	if( next_sample ) {
+	  eudaq::RawDataEvent ev( EVENT_TYPE, m_run, m_ev );
+	  std::vector<unsigned char> buffer;
+	  ++cnt;
+	  size = spidrdaq->sampleSize();
+	  cout << "Sample " << cnt << " size=" << size << endl;
+	  while( spidrdaq->nextPixel( &x, &y, &pixdata, &timestamp ) ) {
+	    cout << x << "," << y << ": " << dec << pixdata << endl;
+	    buffer.push_back( '1' );
+	  }
+	  // Add buffer to block
+	  ev.AddBlock( 1, buffer );
+	  // Send the event to the Data Collector      
+	  SendEvent(ev);
+	  // Now increment the event number
+	  m_ev++;
+	}
       }
-      hardware.CompletedEvent();
-      // Send the event to the Data Collector      
-      SendEvent(ev);
-      // Now increment the event number
-      m_ev++;
+      spidrctrl->closeShutter();
     }
   }
 
@@ -318,14 +359,14 @@ private:
   // This is just a dummy class representing the hardware
   // It here basically that the example code will compile
   // but it also generates example raw data to help illustrate the decoder
-  eudaq::ExampleHardware hardware;
-  unsigned m_run, m_ev, m_exampleparam;
+  unsigned m_run, m_ev;
   int m_spidrPort;
   int device_nr = 0;
   bool stopping, done,started;
   string m_spidrIP, m_xmlfileName, m_time;
   Timepix3Config *myTimepix3Config;
   SpidrController *spidrctrl;
+  SpidrDaq *spidrdaq;
   Keithley2450 *k2450;
 };
 

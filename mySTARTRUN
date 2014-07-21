@@ -35,14 +35,14 @@ printf '\033[22;33m\t Starting Subprocesses \033[0m \n'
 printf '\033[22;33m\t RunControl \033[0m \n'
 #./euRun.exe -x 0 -y 0 -w 650 -g 550 &
 ./euRun.exe -x 0 -y 0 -w 650 -g 550 -a tcp://$RCPORT &
-sleep 5
+sleep 2
 ######################################################################
 # euLog
 ###############
 printf '\033[22;33m\t Logger  \033[0m \n'
 #./euLog.exe -x 0 -y 550 -w 1500 -g 450 &
 ./euLog.exe -x 0 -y 550 -w 1500 -g 450 -r tcp://$HOSTIP:44000 &
-sleep 5
+sleep 2
 ######################################################################
 # DataCollector
 ###############
@@ -64,15 +64,15 @@ sleep 1
 ######################################################################
 # TLU producer
 ###############
-if [ -f "TLUProducer.exe" ]
-then
-    printf '\033[22;33m\t  TLUProducer  \033[0m \n'
-    xterm -sb -sl 1000 -geom 80x10-480-500 -T 'TLU Producer' -e './TLUProducer.exe' &
-    sleep 1
-else
-    printf '\033[22;31m\t  TLUProducer not found! \033[0m \n'
-    echo 'Configure EUDAQ with the CMake option "-D BUILD_tlu=ON" and re-run "make install" to install.'
-fi
+#if [ -f "TLUProducer.exe" ]
+#then
+#    printf '\033[22;33m\t  TLUProducer  \033[0m \n'
+#    xterm -sb -sl 1000 -geom 80x10-480-500 -T 'TLU Producer' -e './TLUProducer.exe' &
+#    sleep 1
+#else
+#    printf '\033[22;31m\t  TLUProducer not found! \033[0m \n'
+#    echo 'Configure EUDAQ with the CMake option "-D BUILD_tlu=ON" and re-run "make install" to install.'
+#fi
 #####################################################################
 ######################################################################
 # Online Monitor
