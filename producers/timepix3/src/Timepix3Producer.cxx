@@ -144,7 +144,26 @@ class Timepix3Producer : public eudaq::Producer {
 	  // Unpack general config
 	  myTimepix3Config->unpackGeneralConfig( config );
 	}
+
+      } else if( name == "PllConfig" ) {
+	if ( !spidrctrl->setPllConfig( device_nr, val ) ) {
+	  error_out( "###setPllConfig" );
+	} else {
+	  int config = -1;
+	  spidrctrl->getPllConfig( device_nr, &config );
+	  cout << "Successfully set PLL Config to " << config << endl;
+	}
+
+      } else if( name == "OutputBlockConfig" ) {
+	if ( !spidrctrl->setOutBlockConfig( device_nr, val ) ) {
+	  error_out( "###setOutBlockConfig" );
+	} else {
+	  int config = -1;
+	  spidrctrl->getOutBlockConfig( device_nr, &config );
+	  cout << "Successfully set Output Block Config to " << config << endl;
+	}
       }
+
     }
     
     // Reset entire matrix config to zeroes
@@ -317,22 +336,22 @@ class Timepix3Producer : public eudaq::Producer {
       // Create a RawDataEvent to contain the event data to be sent
       // eudaq::RawDataEvent ev(EVENT_TYPE, m_run, m_ev);
       
-      // Set Timepix3 into acquisition mode
+      // Set Timepix3 acquisition mode
       if( !spidrctrl->datadrivenReadout() ) error_out( "###datadrivenReadout" );
         
       // Sample pixel data
       spidrdaq->setSampling( true );
       
-      // Configure the shutter trigger
+      // Open shutter
       if( !spidrctrl->openShutter() ) error_out( "###openShutter" );
             
       while( !stopping ) {
       
-	int cnt = 0, size, x, y, pixdata, timestamp;
+	int cnt = 0, size, x, y, pixdata, ftoa, tot, toa, timestamp;
 	bool next_sample = true;
 	//while( next_sample ) {
 	// Get a sample of (at most) 1000 pixel data packets, waiting up to 3 s for it
-	next_sample = spidrdaq->getSample( 1, 3000 );
+	next_sample = spidrdaq->getSample( 100, 3000 );
 	if( next_sample ) {
 	  eudaq::RawDataEvent ev( EVENT_TYPE, m_run, m_ev );
 	  std::vector<unsigned char> buffer;
@@ -340,11 +359,19 @@ class Timepix3Producer : public eudaq::Producer {
 	  size = spidrdaq->sampleSize();
 	  cout << "Sample " << cnt << " size=" << size << endl;
 	  while( spidrdaq->nextPixel( &x, &y, &pixdata, &timestamp ) ) {
-	    cout << x << "," << y << ": " << dec << pixdata << endl;
-	    buffer.push_back( '1' );
+	    ftoa = ( pixdata >> 0 ) & ~(~0 << 4);  // [3:0]
+	    tot  = ( pixdata >> 4 ) & ~(~0 << 10); // [13:4]
+	    toa  = ( pixdata >> 14) & ~(~0 << 14); // [27:14]
+	    cout << x << "," << y << ": " << ftoa << "," << tot << "," << toa << "," << timestamp << endl;
+	    //buffer.push_back( '1' );
+	    pack( buffer, x );
+	    pack( buffer, y );
+	    pack( buffer, ftoa );
+	    pack( buffer, tot );
+	    pack( buffer, toa );
 	  }
 	  // Add buffer to block
-	  ev.AddBlock( 1, buffer );
+	  ev.AddBlock( 0, buffer );
 	  // Send the event to the Data Collector      
 	  SendEvent(ev);
 	  // Now increment the event number

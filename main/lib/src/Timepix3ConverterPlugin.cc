@@ -58,19 +58,106 @@ namespace eudaq {
     virtual bool GetStandardSubEvent(StandardEvent & sev, const Event & ev) const {
       // If the event type is used for different sensors
       // they can be differentiated here
-      // std::string sensortype = "example";
+      std::string sensortype = "timepix3";
+      
       // Create a StandardPlane representing one sensor plane
-      // int id = 0;
-      // StandardPlane plane(id, EVENT_TYPE, sensortype);
+      int id = 0;
+      StandardPlane plane(id, EVENT_TYPE, sensortype);
+      
       // Set the number of pixels
-      // int width = 100, height = 50;
-      // plane.SetSizeRaw(width, height);
+      int width = 256, height = 256;
+      plane.SetSizeRaw(width, height);
+      
+      // Unpack data
+      const RawDataEvent * rev = dynamic_cast<const RawDataEvent *> ( &ev );
+      std::cout << "[Number of blocks] " << rev->NumBlocks() << std::endl;
+      std::vector<unsigned char> data = rev->GetBlock( 0 ); // or 1?
+      std::cout << "vector has size : " << data.size() << std::endl;
+      
+      std::vector<unsigned int> ZSDataX;
+      std::vector<unsigned int> ZSDataY;
+      std::vector<unsigned int> ZSDataFTOA;
+      std::vector<unsigned int> ZSDataTOT;
+      std::vector<unsigned int> ZSDataTOA;      
+      size_t offset = 0;
+      unsigned int aWord = 0;
+      
+      for( unsigned int i = 0; i < ( data.size() ) / 20; i++ ) { // 20 = 5*4 bytes for x,y,ftoa,tot,toa
+
+	// // unpack(data,offset,aWord);
+	// // offset+=sizeof(aWord);
+	// // ZSDataX.push_back(aWord);
+	
+	// // unpack(data,offset,aWord);
+	// // offset+=sizeof(aWord);
+	// // ZSDataY.push_back(aWord);
+	
+	// aWord = 0;
+	// for(unsigned int j=0;j<4;j++){
+	//   aWord = aWord | ( data[offset+j] << j*8 );
+	// }
+	// offset+=sizeof(aWord);
+	// ZSDataX.push_back(aWord);
+
+	// aWord = 0;
+	// for(unsigned int j=0;j<4;j++){
+	//   aWord = aWord | ( data[offset+j] << j*8 );
+	// }
+	// offset+=sizeof(aWord);
+	// ZSDataY.push_back(aWord);
+
+	// aWord = 0;
+	// for(unsigned int j=0;j<4;j++){
+	//   aWord = aWord | ( data[offset+j] << j*8 );
+	// }
+	// offset+=sizeof(aWord);
+	// ZSDataFTOA.push_back(aWord);
+
+	// aWord = 0;
+	// for(unsigned int j=0;j<4;j++){
+	//   aWord = aWord | ( data[offset+j] << j*8 );
+	// }
+	// offset+=sizeof(aWord);
+	// ZSDataTOT.push_back(aWord);
+
+	// aWord = 0;
+	// for(unsigned int j=0;j<4;j++){
+	//   aWord = aWord | ( data[offset+j] << j*8 );
+	// }
+	// offset+=sizeof(aWord);
+	// ZSDataTOA.push_back(aWord);
+
+	// std::cout << offset << std::endl;
+
+	ZSDataX.push_back(    unpackPixelData( data, offset + sizeof( aWord ) * 0 ) ); // first 4 bytes
+	ZSDataY.push_back(    unpackPixelData( data, offset + sizeof( aWord ) * 1 ) ); // next 4 bytes
+	ZSDataFTOA.push_back( unpackPixelData( data, offset + sizeof( aWord ) * 2 ) ); // and
+	ZSDataTOT.push_back(  unpackPixelData( data, offset + sizeof( aWord ) * 3 ) ); // so
+	ZSDataTOA.push_back(  unpackPixelData( data, offset + sizeof( aWord ) * 4 ) ); // on
+
+	std::cout << "[DATA] "  << " " << ZSDataX[i] << " " << ZSDataY[i] << " " << ZSDataFTOA[i] << " " << ZSDataTOT[i] << " " << ZSDataTOA[i] << std::endl;
+
+	offset += sizeof( aWord ) * 5; // shift by 20 bytes to reach next pixel info 
+      }
+
       // Set the trigger ID
       // plane.SetTLUEvent(GetTriggerID(ev));
+      
       // Add the plane to the StandardEvent
-      // sev.AddPlane(plane);
+      sev.AddPlane(plane);
+      
       // Indicate that data was successfully converted
       return true;
+    }
+
+    unsigned int unpackPixelData( std::vector<unsigned char> data, size_t offset ) const {
+
+      unsigned int aWord = 0;
+      for( unsigned int j=0; j<4; j++ ) {
+	aWord = aWord | ( data[offset+j] << j*8 );
+      }
+
+      return aWord;
     }
     
 #if USE_LCIO
@@ -101,3 +188,43 @@ namespace eudaq {
   Timepix3ConverterPlugin Timepix3ConverterPlugin::m_instance;
   
 } // namespace eudaq
+
+
+/*
+Start Run: 42
+Sample 1 size=104
+128,254: 13,2,5376,52832
+130,252: 11,3,5376,52832
+132,254: 13,2,5376,52832
+134,253: 13,2,5376,52832
+136,254: 13,3,5376,52832
+139,254: 13,2,5376,52832
+140,254: 13,2,5376,52832
+142,252: 13,2,5376,52832
+144,252: 12,2,5376,52832
+146,252: 12,2,5376,52832
+149,254: 13,2,5376,52832
+150,252: 11,3,5376,52832
+152,254: 13,2,5376,52832
+Sample 1 size=104
+142,214: 13,3,5376,52846
+145,210: 13,3,5376,52846
+147,215: 13,2,5376,52846
+149,212: 13,2,5376,52846
+151,214: 13,3,5376,52846
+152,211: 12,2,5376,52846
+155,202: 13,3,5376,52846
+157,201: 13,3,5376,52846
+159,146: 15,2,5376,52846
+161,162: 14,3,5376,52846
+163,30: 15,1,5376,52846
+164,73: 15,2,5376,52846
+167,23: 15,1,5376,52846
+Sample 1 size=8
+80,166: 14,1022,5376,27944
+Sample 1 size=8
+80,166: 12,1022,504,28261
+Sample 1 size=8
+80,166: 1,1022,4492,38561
+Sample 1 size=8
+*/
