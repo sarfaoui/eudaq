@@ -99,3 +99,11 @@ template <typename T>
 inline void unpack (vector <unsigned char >& src, int index, T& data) {
   copy (&src[index], &src[index + sizeof (T)], &data);
 }
+
+inline void my_handler( int s ) {
+  
+  cout << "\nCaught signal " << s << endl;
+  cout << "Terminating Timepix3Producer" << endl;
+  exit( 1 );
+  
+}

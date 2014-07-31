@@ -9,6 +9,7 @@
 #include <vector>
 #include <unistd.h>
 #include <iomanip>
+#include <signal.h>
 
 #include "Timepix3Config.h"
 
@@ -229,17 +230,17 @@ class Timepix3Producer : public eudaq::Producer {
       cout << endl;
       int gpib_num = config.Get( "Keithley_GPIB", 18 );
       k2450 = new Keithley2450( gpib_num );
-      double v_bias = config.Get( "V_Bias", 0. );
-      double i_lim = config.Get( "I_Limit", 1e-6 );
+      m_Vbias = config.Get( "V_Bias", 0. );
+      m_Ilim = config.Get( "I_Limit", 1e-6 );
       k2450->OutputOff();
       sleep(1);
       k2450->SetMeasureCurrent();
       sleep(1);
       k2450->SetSourceVoltage4W();
       sleep(1);
-      k2450->SetOutputVoltage( v_bias );
+      k2450->SetOutputVoltage( m_Vbias );
       sleep(1);
-      k2450->SetOutputVoltageCurrentLimit( i_lim );
+      k2450->SetOutputVoltageCurrentLimit( m_Ilim );
       sleep(1);
       k2450->OutputOn();
     }
@@ -249,6 +250,11 @@ class Timepix3Producer : public eudaq::Producer {
 
     // At the end, set the status that will be displayed in the Run Control.
     SetStatus(eudaq::Status::LVL_OK, "Configured (" + config.Name() + ")");
+
+    // Also display something for us
+    cout << endl;
+    cout << "Timepix3 Producer configured. Ready to start run. " << endl;
+    cout << endl;
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -268,6 +274,7 @@ class Timepix3Producer : public eudaq::Producer {
     // You can set tags on the BORE that will be saved in the data file
     // and can be used later to help decoding
     bore.SetTag( "XMLConfig", eudaq::to_string( m_xmlfileName ) );
+    bore.SetTag( "VBias", m_Vbias );
     // Send the event to the Data Collector
     SendEvent(bore);
     
@@ -283,13 +290,13 @@ class Timepix3Producer : public eudaq::Producer {
   // This gets called whenever a run is stopped
   virtual void OnStopRun() {
     std::cout << "Stopping Run" << std::endl;
-    started=false;
+    started = false;
     // Set a flag to signal to the polling loop that the run is over
     stopping = true;
     
     // wait until all events have been read out from the hardware
-    while (stopping) {
-      eudaq::mSleep(20);
+    while( stopping ) {
+      eudaq::mSleep( 20 );
     }
     
     // Send an EORE after all the real events have been sent
@@ -395,6 +402,7 @@ private:
   SpidrController *spidrctrl;
   SpidrDaq *spidrdaq;
   Keithley2450 *k2450;
+  double m_Vbias, m_Ilim;
 };
 
 
@@ -413,6 +421,13 @@ int main(int /*argc*/, const char ** argv) {
   eudaq::Option<std::string> rctrl(op, "r", "runcontrol", "tcp://localhost:44000", "address", "The address of the RunControl.");
   eudaq::Option<std::string> level(op, "l", "log-level",  "NONE",                  "level",   "The minimum level for displaying log messages locally");
   eudaq::Option<std::string> name (op, "n", "name",       "Timepix3",              "string",  "The name of this Producer");
+
+  // Handle CTRL+C interrupt signal (?)
+  struct sigaction sigIntHandler;
+  sigIntHandler.sa_handler = my_handler;
+  sigemptyset(&sigIntHandler.sa_mask);
+  sigIntHandler.sa_flags = 0;
+  sigaction(SIGINT, &sigIntHandler, NULL);
 
   try {
     // This will look through the command-line arguments and set the options
