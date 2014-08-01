@@ -351,40 +351,112 @@ class Timepix3Producer : public eudaq::Producer {
       
       // Open shutter
       if( !spidrctrl->openShutter() ) error_out( "###openShutter" );
-            
+
+      int cnt = 0;       
       while( !stopping ) {
-      
-	int cnt = 0, size, x, y, pixdata, ftoa, tot, toa, timestamp;
-	bool next_sample = true;
-	//while( next_sample ) {
-	// Get a sample of (at most) 1000 pixel data packets, waiting up to 3 s for it
-	next_sample = spidrdaq->getSample( 100, 3000 );
-	if( next_sample ) {
-	  eudaq::RawDataEvent ev( EVENT_TYPE, m_run, m_ev );
-	  std::vector<unsigned char> buffer;
-	  ++cnt;
-	  size = spidrdaq->sampleSize();
-	  cout << "Sample " << cnt << " size=" << size << endl;
-	  while( spidrdaq->nextPixel( &x, &y, &pixdata, &timestamp ) ) {
-	    ftoa = ( pixdata >> 0 ) & ~(~0 << 4);  // [3:0]
-	    tot  = ( pixdata >> 4 ) & ~(~0 << 10); // [13:4]
-	    toa  = ( pixdata >> 14) & ~(~0 << 14); // [27:14]
-	    cout << x << "," << y << ": " << ftoa << "," << tot << "," << toa << "," << timestamp << endl;
-	    //buffer.push_back( '1' );
-	    pack( buffer, x );
-	    pack( buffer, y );
-	    pack( buffer, ftoa );
-	    pack( buffer, tot );
-	    pack( buffer, toa );
+
+      	int size;
+      	bool next_sample = true;
+
+      	// Get a sample of pixel data packets, with timeout in ms
+      	next_sample = spidrdaq->getSample( 100, 1000 );
+
+      	if( next_sample ) {
+      	  eudaq::RawDataEvent ev( EVENT_TYPE, m_run, m_ev );
+      	  std::vector<unsigned char> buffer;
+      	  ++cnt;
+      	  size = spidrdaq->sampleSize();
+      	  cout << "Sample " << cnt << " size=" << size << endl;
+	  
+	  // loop over sample buffer
+	  for( int i = 0; i < size/8; ++i ) {
+	    
+	    uint64_t data = spidrdaq->nextPacket();
+	    uint64_t header = data & 0xF000000000000000;
+	    
+	    // Data-driven or sequential readout pixel data header?
+	    if( header == 0xB000000000000000 || header == 0xA000000000000000 ) {
+	      int x, y, pixdata, ftoa, tot, toa, timestamp;
+	      uint64_t dcol, spix, pix;
+	      // doublecolumn * 2
+	      dcol  = (( data & 0x0FE0000000000000 ) >> 52 ); //(16+28+9-1)
+	      // superpixel * 4
+	      spix  = (( data & 0x001F800000000000 ) >> 45 ); //(16+28+3-2)
+	      // pixel
+	      pix   = (( data & 0x0000700000000000) >> 44 ); //(16+28)
+	      x    = (int) ( dcol + pix/4 );
+	      y    = (int) ( spix + ( pix & 0x3 ) );
+	      if( data ) {
+		pixdata = (int) (( data & 0x00000FFFFFFF0000 ) >> 16 );
+		ftoa = ( pixdata >> 0 ) & ~(~0 << 4);  // [3:0] (4=3-0+1)
+		tot  = ( pixdata >> 4 ) & ~(~0 << 10); // [13:4] (10=13-4+1)
+		toa  = ( pixdata >> 14) & ~(~0 << 14); // [27:14] (14=27-14+1)
+	      }
+	      if( timestamp ) {
+		timestamp = (int) (data & 0x000000000000FFFF);
+	      }
+	      cout << "[PIXDATA] " << x << "," << y << ": " << ftoa << "," << tot << "," << toa << "," << timestamp << endl;
+	      pack( buffer, x );
+	      pack( buffer, y );
+	      pack( buffer, ftoa );
+	      pack( buffer, tot );
+	      pack( buffer, toa );
+	    } else if( header == 0x5000000000000000 ) { // Or TLU packet header?
+	      int int_trg_nr, tlu_trg_nr, trg_timestamp;
+	      //internal trigger number
+	      int_trg_nr = (data >> 45) & 0x7FFF;
+	      //TLU trigger number
+	      tlu_trg_nr = (data >> 30) & 0x7FFF;
+	      //timestamp
+	      trg_timestamp = data & 0x3FFFFFFF;
+	      // -> tlu data
+	      cout << "[TRIGGERDATA] " << int_trg_nr << "," << tlu_trg_nr << "," << trg_timestamp << endl;
+	    }
 	  }
-	  // Add buffer to block
-	  ev.AddBlock( 0, buffer );
-	  // Send the event to the Data Collector      
-	  SendEvent(ev);
-	  // Now increment the event number
-	  m_ev++;
-	}
-      }
+
+      	  // Add buffer to block
+      	  ev.AddBlock( 0, buffer );
+      	  // Send the event to the Data Collector      
+      	  SendEvent(ev);
+      	  // Now increment the event number
+      	  m_ev++;
+      	}
+      }      
+
+      // while( !stopping ) {
+      // 	int cnt = 0, size, x, y, pixdata, ftoa, tot, toa, timestamp;
+      // 	bool next_sample = true;
+      // 	//while( next_sample ) {
+      // 	// Get a sample of (at most) 1000 pixel data packets, waiting up to 3 s for it
+      // 	next_sample = spidrdaq->getSample( 100, 3000 );
+      // 	if( next_sample ) {
+      // 	  eudaq::RawDataEvent ev( EVENT_TYPE, m_run, m_ev );
+      // 	  std::vector<unsigned char> buffer;
+      // 	  ++cnt;
+      // 	  size = spidrdaq->sampleSize();
+      // 	  cout << "Sample " << cnt << " size=" << size << endl;
+      // 	  while( spidrdaq->nextPixel( &x, &y, &pixdata, &timestamp ) ) {
+      // 	    ftoa = ( pixdata >> 0 ) & ~(~0 << 4);  // [3:0] (4=3-0+1)
+      // 	    tot  = ( pixdata >> 4 ) & ~(~0 << 10); // [13:4] (10=13-4+1)
+      // 	    toa  = ( pixdata >> 14) & ~(~0 << 14); // [27:14] (14=27-14+1)
+      // 	    cout << x << "," << y << ": " << ftoa << "," << tot << "," << toa << "," << timestamp << endl;
+      // 	    //buffer.push_back( '1' );
+      // 	    pack( buffer, x );
+      // 	    pack( buffer, y );
+      // 	    pack( buffer, ftoa );
+      // 	    pack( buffer, tot );
+      // 	    pack( buffer, toa );
+      // 	  }
+      // 	  // Add buffer to block
+      // 	  ev.AddBlock( 0, buffer );
+      // 	  // Send the event to the Data Collector      
+      // 	  SendEvent(ev);
+      // 	  // Now increment the event number
+      // 	  m_ev++;
+      // 	}
+      // }
+
+      // Guess what this does?
       spidrctrl->closeShutter();
     }
   }

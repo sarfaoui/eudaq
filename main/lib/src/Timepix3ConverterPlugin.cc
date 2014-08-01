@@ -61,7 +61,7 @@ namespace eudaq {
       std::string sensortype = "timepix3";
       
       // Create a StandardPlane representing one sensor plane
-      int id = 0;
+      int id = 1;
       StandardPlane plane(id, EVENT_TYPE, sensortype);
       
       // Set the number of pixels
@@ -84,51 +84,6 @@ namespace eudaq {
       
       for( unsigned int i = 0; i < ( data.size() ) / 20; i++ ) { // 20 = 5*4 bytes for x,y,ftoa,tot,toa
 
-	// // unpack(data,offset,aWord);
-	// // offset+=sizeof(aWord);
-	// // ZSDataX.push_back(aWord);
-	
-	// // unpack(data,offset,aWord);
-	// // offset+=sizeof(aWord);
-	// // ZSDataY.push_back(aWord);
-	
-	// aWord = 0;
-	// for(unsigned int j=0;j<4;j++){
-	//   aWord = aWord | ( data[offset+j] << j*8 );
-	// }
-	// offset+=sizeof(aWord);
-	// ZSDataX.push_back(aWord);
-
-	// aWord = 0;
-	// for(unsigned int j=0;j<4;j++){
-	//   aWord = aWord | ( data[offset+j] << j*8 );
-	// }
-	// offset+=sizeof(aWord);
-	// ZSDataY.push_back(aWord);
-
-	// aWord = 0;
-	// for(unsigned int j=0;j<4;j++){
-	//   aWord = aWord | ( data[offset+j] << j*8 );
-	// }
-	// offset+=sizeof(aWord);
-	// ZSDataFTOA.push_back(aWord);
-
-	// aWord = 0;
-	// for(unsigned int j=0;j<4;j++){
-	//   aWord = aWord | ( data[offset+j] << j*8 );
-	// }
-	// offset+=sizeof(aWord);
-	// ZSDataTOT.push_back(aWord);
-
-	// aWord = 0;
-	// for(unsigned int j=0;j<4;j++){
-	//   aWord = aWord | ( data[offset+j] << j*8 );
-	// }
-	// offset+=sizeof(aWord);
-	// ZSDataTOA.push_back(aWord);
-
-	// std::cout << offset << std::endl;
-
 	ZSDataX.push_back(    unpackPixelData( data, offset + sizeof( aWord ) * 0 ) ); // first 4 bytes
 	ZSDataY.push_back(    unpackPixelData( data, offset + sizeof( aWord ) * 1 ) ); // next 4 bytes
 	ZSDataFTOA.push_back( unpackPixelData( data, offset + sizeof( aWord ) * 2 ) ); // and
@@ -143,8 +98,12 @@ namespace eudaq {
       // Set the trigger ID
       // plane.SetTLUEvent(GetTriggerID(ev));
       
+      for( size_t i = 0 ; i < ZSDataX.size(); ++i ) {
+	plane.PushPixel( ZSDataX[i], ZSDataY[i], ZSDataTOT[i] );
+      }
+
       // Add the plane to the StandardEvent
-      sev.AddPlane(plane);
+      sev.AddPlane( plane );
       
       // Indicate that data was successfully converted
       return true;
