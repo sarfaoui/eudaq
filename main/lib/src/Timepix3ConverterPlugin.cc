@@ -61,7 +61,7 @@ namespace eudaq {
       std::string sensortype = "timepix3";
       
       // Create a StandardPlane representing one sensor plane
-      int id = 1;
+      int id = 0;
       StandardPlane plane(id, EVENT_TYPE, sensortype);
       
       // Set the number of pixels

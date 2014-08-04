@@ -59,7 +59,7 @@ class Timepix3Producer : public eudaq::Producer {
     cout << "Configuration file created on: " << myTimepix3Config->getTime() << endl;
 
     // SPIDR-TPX3 IP & PORT
-    m_spidrIP  = config.Get( "SPIDR_IP", "192.168.100.1" );
+    m_spidrIP  = config.Get( "SPIDR_IP", "192.168.100.10" );
     int ip[4];
     vector<TString> ipstr = tokenise( m_spidrIP, ".");
     for (int i = 0; i < ipstr.size(); i++ ) ip[i] = ipstr[i].Atoi();
@@ -193,6 +193,16 @@ class Timepix3Producer : public eudaq::Producer {
 	bool mask = matrix_mask[x][y];
 	if( !spidrctrl->setPixelMask( x, y, mask ) ) maskfail = true;
       }
+    }
+    // Add pixels masked by the user in the conf
+    string user_mask = config.Get( "User_Mask", "" );
+    vector<TString> pairs = tokenise( user_mask, ":");
+    for( int k = 0; k < pairs.size(); ++k ) {
+      vector<TString> pair = tokenise( pairs[k], "," );
+      int x = pair[0].Atoi();
+      int y = pair[1].Atoi();
+      cout << "Additinal user mask: " << x << "," << y << endl;
+      if( !spidrctrl->setPixelMask( x, y, true ) ) maskfail = true;
     }
     if( !maskfail ) {
       cout << "Successfully built pixel mask." << endl;
@@ -352,6 +362,9 @@ class Timepix3Producer : public eudaq::Producer {
       // Open shutter
       if( !spidrctrl->openShutter() ) error_out( "###openShutter" );
 
+      // Enable TLU
+      //if( !spidrctrl->tlu_enable( device_nr, 1 ) ) error_out( "###tlu_enable" );
+
       int cnt = 0;       
       while( !stopping ) {
 
@@ -386,16 +399,15 @@ class Timepix3Producer : public eudaq::Producer {
 	      pix   = (( data & 0x0000700000000000) >> 44 ); //(16+28)
 	      x    = (int) ( dcol + pix/4 );
 	      y    = (int) ( spix + ( pix & 0x3 ) );
-	      if( data ) {
-		pixdata = (int) (( data & 0x00000FFFFFFF0000 ) >> 16 );
-		ftoa = ( pixdata >> 0 ) & ~(~0 << 4);  // [3:0] (4=3-0+1)
-		tot  = ( pixdata >> 4 ) & ~(~0 << 10); // [13:4] (10=13-4+1)
-		toa  = ( pixdata >> 14) & ~(~0 << 14); // [27:14] (14=27-14+1)
-	      }
-	      if( timestamp ) {
-		timestamp = (int) (data & 0x000000000000FFFF);
-	      }
+	      // pixel data
+	      pixdata = (int) (( data & 0x00000FFFFFFF0000 ) >> 16 );
+	      ftoa = ( pixdata >> 0 ) & ~(~0 << 4);  // [3:0] (4=3-0+1)
+	      tot  = ( pixdata >> 4 ) & ~(~0 << 10); // [13:4] (10=13-4+1)
+	      toa  = ( pixdata >> 14) & ~(~0 << 14); // [27:14] (14=27-14+1)
+	      timestamp = (int) (data & 0x000000000000FFFF);
+	      // print it
 	      cout << "[PIXDATA] " << x << "," << y << ": " << ftoa << "," << tot << "," << toa << "," << timestamp << endl;
+	      // pack pixel data into event buffer
 	      pack( buffer, x );
 	      pack( buffer, y );
 	      pack( buffer, ftoa );
