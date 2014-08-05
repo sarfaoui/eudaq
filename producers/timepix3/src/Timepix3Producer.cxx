@@ -4,6 +4,7 @@
 #include "eudaq/Timer.hh"
 #include "eudaq/Utils.hh"
 #include "eudaq/OptionParser.hh"
+
 #include <iostream>
 #include <ostream>
 #include <vector>
@@ -142,7 +143,7 @@ class Timepix3Producer : public eudaq::Producer {
 	  int config = -1;
 	  spidrctrl->getGenConfig( device_nr, &config );
 	  cout << "Successfully set General Config to " << config << endl;
-	  // Unpack general config
+	  // Unpack general config for human readable output
 	  myTimepix3Config->unpackGeneralConfig( config );
 	}
 
@@ -170,12 +171,13 @@ class Timepix3Producer : public eudaq::Producer {
     // Reset entire matrix config to zeroes
     spidrctrl->resetPixelConfig();
 
-    // Set per-pixel thresholds from XML
+    // Get per-pixel thresholds from XML
     bool pixfail = false;
     vector< vector< int > > matrix_thresholds = myTimepix3Config->getMatrixDACs();
     for( int x = 0; x < NPIXX; x++ ) {
       for ( int y = 0; y < NPIXY; y++ ) {
-	int threshold = matrix_thresholds[x][y];
+	int threshold = matrix_thresholds[y][x]; // x & y are inverted when parsed from XML
+	// cout << x << " "<< y << " " << threshold << endl;
 	if( !spidrctrl->setPixelThreshold( x, y, threshold ) ) pixfail = true;
       }
     }
@@ -185,12 +187,12 @@ class Timepix3Producer : public eudaq::Producer {
       cout << "Something went wrong building pixel thresholds." << endl;
     }
 
-    // Set pixel mask from XML
+    // Get pixel mask from XML
     bool maskfail = false;
     vector< vector< bool > > matrix_mask = myTimepix3Config->getMatrixMask();
     for( int x = 0; x < NPIXX; x++ ) {
       for ( int y = 0; y < NPIXY; y++ ) {
-	bool mask = matrix_mask[x][y];
+	bool mask = matrix_mask[y][x]; // x & y are inverted when parsed from XML
 	if( !spidrctrl->setPixelMask( x, y, mask ) ) maskfail = true;
       }
     }
@@ -358,12 +360,13 @@ class Timepix3Producer : public eudaq::Producer {
         
       // Sample pixel data
       spidrdaq->setSampling( true );
-      
+      spidrdaq->setSampleAll( true );
+
       // Open shutter
       if( !spidrctrl->openShutter() ) error_out( "###openShutter" );
 
       // Enable TLU
-      //if( !spidrctrl->tlu_enable( device_nr, 1 ) ) error_out( "###tlu_enable" );
+      if( !spidrctrl->tlu_enable( device_nr, 1 ) ) error_out( "###tlu_enable" );
 
       int cnt = 0;       
       while( !stopping ) {
@@ -372,7 +375,7 @@ class Timepix3Producer : public eudaq::Producer {
       	bool next_sample = true;
 
       	// Get a sample of pixel data packets, with timeout in ms
-      	next_sample = spidrdaq->getSample( 100, 1000 );
+      	next_sample = spidrdaq->getSample( 1000, 10 );
 
       	if( next_sample ) {
       	  eudaq::RawDataEvent ev( EVENT_TYPE, m_run, m_ev );
@@ -381,11 +384,15 @@ class Timepix3Producer : public eudaq::Producer {
       	  size = spidrdaq->sampleSize();
       	  cout << "Sample " << cnt << " size=" << size << endl;
 	  
-	  // loop over sample buffer
-	  for( int i = 0; i < size/8; ++i ) {
+	  // look inside sample buffer...
+	  // for( int i = 0; i < size/8; ++i ) {
+	  while( 1 ) {
 	    
 	    uint64_t data = spidrdaq->nextPacket();
 	    uint64_t header = data & 0xF000000000000000;
+	    
+	    // ...until the sample buffer is empty
+	    if( !data ) break;
 	    
 	    // Data-driven or sequential readout pixel data header?
 	    if( header == 0xB000000000000000 || header == 0xA000000000000000 ) {
@@ -424,7 +431,9 @@ class Timepix3Producer : public eudaq::Producer {
 	      // -> tlu data
 	      cout << "[TRIGGERDATA] " << int_trg_nr << "," << tlu_trg_nr << "," << trg_timestamp << endl;
 	    }
-	  }
+	  } // End loop over sample buffer
+
+	  cout << "Left sample loop" << endl;
 
       	  // Add buffer to block
       	  ev.AddBlock( 0, buffer );
@@ -631,7 +640,7 @@ int main(int /*argc*/, const char ** argv) {
 			       TPX3_POLARITY_HPLUS |
 			       TPX3_ACQMODE_TOA_TOT |
 			       TPX3_GRAYCOUNT_ENA |
-			       TPX3_TESTPULSE_ENA |
+			       TPX3_TESTPULSE_ENA |o
 			       TPX3_FASTLO_ENA |
 			       TPX3_SELECTTP_DIGITAL ) )
     {
