@@ -257,9 +257,6 @@ class Timepix3Producer : public eudaq::Producer {
       k2450->OutputOn();
     }
 
-    // Create SpidrDaq for later (best place to do it?)
-    spidrdaq = new SpidrDaq( spidrctrl );
-
     // At the end, set the status that will be displayed in the Run Control.
     SetStatus(eudaq::Status::LVL_OK, "Configured (" + config.Name() + ")");
 
@@ -354,6 +351,9 @@ class Timepix3Producer : public eudaq::Producer {
       // If we get here, there must be data to read out
       // Create a RawDataEvent to contain the event data to be sent
       // eudaq::RawDataEvent ev(EVENT_TYPE, m_run, m_ev);
+
+      // Create SpidrDaq for later (best place to do it?)
+      spidrdaq = new SpidrDaq( spidrctrl );
       
       // Set Timepix3 acquisition mode
       if( !spidrctrl->datadrivenReadout() ) error_out( "###datadrivenReadout" );
@@ -433,8 +433,6 @@ class Timepix3Producer : public eudaq::Producer {
 	    }
 	  } // End loop over sample buffer
 
-	  cout << "Left sample loop" << endl;
-
       	  // Add buffer to block
       	  ev.AddBlock( 0, buffer );
       	  // Send the event to the Data Collector      
@@ -479,6 +477,9 @@ class Timepix3Producer : public eudaq::Producer {
 
       // Guess what this does?
       spidrctrl->closeShutter();
+
+      delete spidrdaq;
+
     }
   }
 
