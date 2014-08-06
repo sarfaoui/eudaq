@@ -368,6 +368,10 @@ class Timepix3Producer : public eudaq::Producer {
       // Enable TLU
       if( !spidrctrl->tlu_enable( device_nr, 1 ) ) error_out( "###tlu_enable" );
 
+      FILE * ft, *fp;
+      ft=fopen("trg.txt","w");
+      fp=fopen("pix.txt","w");
+
       int cnt = 0;       
       while( !stopping ) {
 
@@ -396,7 +400,7 @@ class Timepix3Producer : public eudaq::Producer {
 	    
 	    // Data-driven or sequential readout pixel data header?
 	    if( header == 0xB000000000000000 || header == 0xA000000000000000 ) {
-	      int x, y, pixdata, ftoa, tot, toa, timestamp;
+	      int x, y, pixdata, ftoa, tot, toa, fpga_ts, pix_ts;
 	      uint64_t dcol, spix, pix;
 	      // doublecolumn * 2
 	      dcol  = (( data & 0x0FE0000000000000 ) >> 52 ); //(16+28+9-1)
@@ -408,28 +412,35 @@ class Timepix3Producer : public eudaq::Producer {
 	      y    = (int) ( spix + ( pix & 0x3 ) );
 	      // pixel data
 	      pixdata = (int) (( data & 0x00000FFFFFFF0000 ) >> 16 );
-	      ftoa = ( pixdata >> 0 ) & ~(~0 << 4);  // [3:0] (4=3-0+1)
-	      tot  = ( pixdata >> 4 ) & ~(~0 << 10); // [13:4] (10=13-4+1)
-	      toa  = ( pixdata >> 14) & ~(~0 << 14); // [27:14] (14=27-14+1)
-	      timestamp = (int) (data & 0x000000000000FFFF);
+	      //ftoa = ( pixdata >> 0 ) & ~(~0 << 4);  // [3:0] (4=3-0+1)
+	      //tot  = ( pixdata >> 4 ) & ~(~0 << 10); // [13:4] (10=13-4+1)
+	      //toa  = ( pixdata >> 14) & ~(~0 << 14); // [27:14] (14=27-14+1)
+	      ftoa = pixdata & 0xF;
+	      tot  = ( pixdata >> 4 ) & 0x3FF;
+	      toa  = ( pixdata >> 14 ) & 0x3FFF;
+	      fpga_ts = (int) (data & 0x000000000000FFFF);
+	      pix_ts = ( fpga_ts << 14 ) | toa; 
 	      // print it
-	      cout << "[PIXDATA] " << x << "," << y << ": " << ftoa << "," << tot << "," << toa << "," << timestamp << endl;
+	      cout << "[PIXDATA] " << x << "," << y << ": " << ftoa << "," << tot << "," << toa << "," << pix_ts << endl;
 	      // pack pixel data into event buffer
 	      pack( buffer, x );
 	      pack( buffer, y );
 	      pack( buffer, ftoa );
 	      pack( buffer, tot );
 	      pack( buffer, toa );
+              fprintf(fp,"%d\n",pix_ts);
 	    } else if( header == 0x5000000000000000 ) { // Or TLU packet header?
 	      int int_trg_nr, tlu_trg_nr, trg_timestamp;
 	      //internal trigger number
 	      int_trg_nr = (data >> 45) & 0x7FFF;
 	      //TLU trigger number
 	      tlu_trg_nr = (data >> 30) & 0x7FFF;
+	      //tlu_trg_nr = (data >> 31) & 0x3FFF;
 	      //timestamp
 	      trg_timestamp = data & 0x3FFFFFFF;
 	      // -> tlu data
 	      cout << "[TRIGGERDATA] " << int_trg_nr << "," << tlu_trg_nr << "," << trg_timestamp << endl;
+              fprintf(ft,"%d\n",trg_timestamp);
 	    }
 	  } // End loop over sample buffer
 
@@ -474,6 +485,9 @@ class Timepix3Producer : public eudaq::Producer {
       // 	  m_ev++;
       // 	}
       // }
+
+      fclose(fp);
+      fclose(ft);
 
       // Guess what this does?
       spidrctrl->closeShutter();

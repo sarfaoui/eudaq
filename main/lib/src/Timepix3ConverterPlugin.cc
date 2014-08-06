@@ -42,6 +42,7 @@ namespace eudaq {
       // Make sure the event is of class RawDataEvent
       if (const RawDataEvent * rev = dynamic_cast<const RawDataEvent *> (&ev)) {
 	// This is just an example, modified it to suit your raw data format
+
 	// Make sure we have at least one block of data, and it is large enough
 	if (rev->NumBlocks() > 0 && rev->GetBlock(0).size() >= (TRIGGER_OFFSET + sizeof(short))) {
 	  // Read a little-endian unsigned short from offset TRIGGER_OFFSET
@@ -60,19 +61,21 @@ namespace eudaq {
       // they can be differentiated here
       std::string sensortype = "timepix3";
       
-      // Create a StandardPlane representing one sensor plane
-      int id = 0;
-      StandardPlane plane(id, EVENT_TYPE, sensortype);
-      
-      // Set the number of pixels
-      int width = 256, height = 256;
-      plane.SetSizeRaw(width, height);
+
       
       // Unpack data
       const RawDataEvent * rev = dynamic_cast<const RawDataEvent *> ( &ev );
       std::cout << "[Number of blocks] " << rev->NumBlocks() << std::endl;
       std::vector<unsigned char> data = rev->GetBlock( 0 ); // or 1?
       std::cout << "vector has size : " << data.size() << std::endl;
+
+      // Create a StandardPlane representing one sensor plane
+      int id = 0;
+      StandardPlane plane(id, EVENT_TYPE, sensortype);
+      
+      // Set the number of pixels
+      int width = 256, height = 256;
+      plane.SetSizeZS(width,height,( data.size() ) / 20 );
       
       std::vector<unsigned int> ZSDataX;
       std::vector<unsigned int> ZSDataY;
