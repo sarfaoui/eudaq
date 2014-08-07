@@ -194,6 +194,18 @@ void Timepix3Config::unpackGeneralConfig( int config ) {
     cout << "\tTimerOverflowControl is OFF" << endl;
   }
 
+  if( IntBits( config ).test( 9 ) ) {
+    cout << "\tSending Digital TP [1]" << endl;
+  } else {
+    cout << "\tSending Analog TP [0] " << endl;
+  }
+
+  if( IntBits( config ).test( 10 ) ) {
+    cout << "\tExtrenal TP [1]" << endl;
+  } else {
+    cout << "\tInternal TP [0] " << endl;
+  }
+
   cout << endl;
 
 }
