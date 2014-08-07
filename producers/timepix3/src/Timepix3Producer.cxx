@@ -354,6 +354,9 @@ class Timepix3Producer : public eudaq::Producer {
 
       // Create SpidrDaq for later (best place to do it?)
       spidrdaq = new SpidrDaq( spidrctrl );
+
+      // Restart timers to sync Timepix3 and TLU timestamps
+      if( !spidrctrl->restartTimers() ) error_out( "###restartTimers" );
       
       // Set Timepix3 acquisition mode
       if( !spidrctrl->datadrivenReadout() ) error_out( "###datadrivenReadout" );
@@ -368,10 +371,11 @@ class Timepix3Producer : public eudaq::Producer {
       // Enable TLU
       if( !spidrctrl->tlu_enable( device_nr, 1 ) ) error_out( "###tlu_enable" );
 
-      FILE * ft, *fp;
-      ft=fopen("trg.txt","w");
-      fp=fopen("pix.txt","w");
-
+      FILE *ft, *fp, *fa;
+      ft = fopen("trg.txt","w");
+      fp = fopen("pix.txt","w");
+      fa = fopen("all.txt","w");
+      
       int cnt = 0;       
       while( !stopping ) {
 
@@ -379,7 +383,7 @@ class Timepix3Producer : public eudaq::Producer {
       	bool next_sample = true;
 
       	// Get a sample of pixel data packets, with timeout in ms
-      	next_sample = spidrdaq->getSample( 1000, 10 );
+      	next_sample = spidrdaq->getSample( 1000, 1 );
 
       	if( next_sample ) {
       	  eudaq::RawDataEvent ev( EVENT_TYPE, m_run, m_ev );
@@ -388,6 +392,8 @@ class Timepix3Producer : public eudaq::Producer {
       	  size = spidrdaq->sampleSize();
       	  cout << "Sample " << cnt << " size=" << size << endl;
 	  
+	  fprintf(fa,"#\n");
+
 	  // look inside sample buffer...
 	  // for( int i = 0; i < size/8; ++i ) {
 	  while( 1 ) {
@@ -429,6 +435,7 @@ class Timepix3Producer : public eudaq::Producer {
 	      pack( buffer, tot );
 	      pack( buffer, toa );
               fprintf(fp,"%d\n",pix_ts);
+	      fprintf(fa,"p\t%d\n",pix_ts);
 	    } else if( header == 0x5000000000000000 ) { // Or TLU packet header?
 	      int int_trg_nr, tlu_trg_nr, trg_timestamp;
 	      //internal trigger number
@@ -441,6 +448,7 @@ class Timepix3Producer : public eudaq::Producer {
 	      // -> tlu data
 	      cout << "[TRIGGERDATA] " << int_trg_nr << "," << tlu_trg_nr << "," << trg_timestamp << endl;
               fprintf(ft,"%d\n",trg_timestamp);
+              fprintf(fa,"t\t%d\n",trg_timestamp);
 	    }
 	  } // End loop over sample buffer
 
@@ -488,6 +496,7 @@ class Timepix3Producer : public eudaq::Producer {
 
       fclose(fp);
       fclose(ft);
+      fclose(fa);
 
       // Guess what this does?
       spidrctrl->closeShutter();
