@@ -19,19 +19,23 @@
 
 #define error_out(str) cout<<str<<": "<<spidrctrl->errorString()<<endl
 
+//#define TPX3_VERBOSE
+//#define TPX3_STORE_TXT
+
 using namespace std;
  
 // Structure to store pixel info
 struct PIXEL
 {
-  int x, y, ftoa, tot, toa;
+  unsigned char  x, y;
+  unsigned short tot;
   uint64_t ts;
 };
 
 // Structure to store trigger info
 struct TRIGGER
 {
-  int int_nr, tlu_nr;
+  unsigned short int_nr, tlu_nr;
   uint64_t ts;
 };
 
@@ -227,12 +231,29 @@ class Timepix3Producer : public eudaq::Producer {
       cout << "Something went wrong building pixel mask." << endl;
     }
 
-    // Enable test-pulses for some columns
+    // Enable test-pulses for some pixels
     spidrctrl->setCtprBit( 16 );
+    spidrctrl->setCtprBit( 86 );
+    spidrctrl->setCtprBit( 26 );
+    spidrctrl->setCtprBit( 96 );
     if( !spidrctrl->setCtpr( device_nr ) ) error_out( "###setCtpr" );
     spidrctrl->setPixelTestEna( 16, 16, true );
     spidrctrl->setPixelTestEna( 16, 216, true );
-    
+    spidrctrl->setPixelTestEna( 16, 26, true );
+    spidrctrl->setPixelTestEna( 16, 146, true );
+    spidrctrl->setPixelTestEna( 26, 36, true );
+    spidrctrl->setPixelTestEna( 26, 136, true );
+    spidrctrl->setPixelTestEna( 26, 46, true );
+    spidrctrl->setPixelTestEna( 26, 126, true );
+    spidrctrl->setPixelTestEna( 86, 16, true );
+    spidrctrl->setPixelTestEna( 86, 216, true );
+    spidrctrl->setPixelTestEna( 86, 26, true );
+    spidrctrl->setPixelTestEna( 86, 146, true );
+    spidrctrl->setPixelTestEna( 96, 36, true );
+    spidrctrl->setPixelTestEna( 96, 136, true );
+    spidrctrl->setPixelTestEna( 96, 46, true );
+    spidrctrl->setPixelTestEna( 96, 126, true );
+
     // Actually set the pixel thresholds and mask
     if( !spidrctrl->setPixelConfig( device_nr ) ) {
       error_out( "###setPixelConfig" );
@@ -369,9 +390,6 @@ class Timepix3Producer : public eudaq::Producer {
 	// Then restart the loop
 	continue;
       }
-      // If we get here, there must be data to read out
-      // Create a RawDataEvent to contain the event data to be sent
-      // eudaq::RawDataEvent ev(EVENT_TYPE, m_run, m_ev);
 
       // Create SpidrDaq for later (best place to do it?)
       spidrdaq = new SpidrDaq( spidrctrl );
@@ -391,52 +409,58 @@ class Timepix3Producer : public eudaq::Producer {
 
       // Enable TLU
       if( !spidrctrl->tlu_enable( device_nr, 1 ) ) error_out( "###tlu_enable" );
-
+      
+#ifdef TPX3_STORE_TXT
       // Some output files for debugging
-      FILE *ft, *fp, *fa;
+      FILE *ft, *fp, *fa, *fd;
       ft = fopen("trg.txt","w");
       fp = fopen("pix.txt","w");
       fa = fopen("all.txt","w");
+      fd = fopen("diff.txt","w");
+#endif
       
       // Vectors to contain pixel and trigger structures
       vector< PIXEL > pixel_vec;
-      pixel_vec.reserve( 1000000 );
+      pixel_vec.reserve( 10000000 );
       vector< TRIGGER > trigger_vec;
-      trigger_vec.reserve( 1000000 );
+      trigger_vec.reserve( 10000000 );
       int last_trg_timestamp=0;
       uint64_t unfolded_timestamp=0;
       uint64_t last_fpga_ts=0;
-
-      int cnt = 0;       
+      const uint64_t TIMER_EPOCH = 0x40000000;
+      int cnt = 0;      
       while( !stopping ) {
 
       	int size;
       	bool next_sample = true;
 
       	// Get a sample of pixel data packets, with timeout in ms
-      	next_sample = spidrdaq->getSample( 1000, 1 );
+      	const unsigned int BUF_SIZE = 8*1024*1024;
+      	next_sample = spidrdaq->getSample( BUF_SIZE, 1 );
 
       	if( next_sample ) {
 
       	  ++cnt;
       	  size = spidrdaq->sampleSize();
-      	  cout << "Sample " << cnt << " size=" << size << endl;
 	  
+#ifdef TPX3_STORE_TXT
 	  fprintf(fa,"#\n");
-
+#endif
 	  // look inside sample buffer...
-	  // for( int i = 0; i < size/8; ++i ) {
 	  while( 1 ) {
 	    
 	    uint64_t data = spidrdaq->nextPacket();
-	    uint64_t header = data & 0xF000000000000000;
-	    
+
 	    // ...until the sample buffer is empty
 	    if( !data ) break;
-	    
+
+	    uint64_t header = data & 0xF000000000000000;
+	    	    
 	    // Data-driven or sequential readout pixel data header?
 	    if( header == 0xB000000000000000 || header == 0xA000000000000000 ) {
-	      int x, y, pixdata, ftoa, tot, toa;
+	      struct PIXEL pixel;
+
+	      unsigned char x, y, pixdata, ftoa, tot, toa;
 	      uint64_t fpga_ts;
 	      uint64_t pix_ts;
 	      uint64_t dcol, spix, pix;
@@ -446,117 +470,136 @@ class Timepix3Producer : public eudaq::Producer {
 	      spix  = (( data & 0x001F800000000000 ) >> 45 ); //(16+28+3-2)
 	      // pixel
 	      pix   = (( data & 0x0000700000000000) >> 44 ); //(16+28)
-	      x    = (int) ( dcol + pix/4 );
-	      y    = (int) ( spix + ( pix & 0x3 ) );
+	      pixel.x    = (unsigned char) ( dcol + pix/4 );
+	      pixel.y    = (unsigned char) ( spix + ( pix & 0x3 ) );
 	      // pixel data
 	      pixdata = (int) (( data & 0x00000FFFFFFF0000 ) >> 16 );
-	      //ftoa = ( pixdata >> 0 ) & ~(~0 << 4);  // [3:0] (4=3-0+1)
-	      //tot  = ( pixdata >> 4 ) & ~(~0 << 10); // [13:4] (10=13-4+1)
-	      //toa  = ( pixdata >> 14) & ~(~0 << 14); // [27:14] (14=27-14+1)
+	      pixel.tot  =  ( pixdata >> 4 ) & 0x3FF;
+
+	      // timestamp calculation
 	      ftoa = pixdata & 0xF;
-	      tot  = ( pixdata >> 4 ) & 0x3FF;
 	      toa  = ( pixdata >> 14 ) & 0x3FFF;
 	      fpga_ts = (int) (data & 0x000000000000FFFF);
 	      pix_ts = ( fpga_ts << 14 ) | toa; 
+	      if( fpga_ts < last_fpga_ts - 1 ) 
+		{
+		  unfolded_timestamp+=TIMER_EPOCH;
+#ifdef TPX3_VERBOSE
+		  cout << "-- unfolding (pix) --\n";
+#endif
+		} else if( fpga_ts == last_fpga_ts - 1 ) 
+		{ 
+		  pix_ts-=TIMER_EPOCH;
+		}
+	      pix_ts += unfolded_timestamp;
+	      pix_ts <<= 4;
+	      pix_ts -= ftoa;
+	      pixel.ts = pix_ts;
+              last_fpga_ts = fpga_ts;
 
-	      if (fpga_ts<last_fpga_ts)
-	      {
-	        unfolded_timestamp+=0x40000000;
-	        cout << "-- unfolding (pix) --\n";
-	      }
-	      pix_ts+=unfolded_timestamp;
-
-	      // put info in struct and store in vector
-	      struct PIXEL pixel;
-	      pixel.x    = x;
-	      pixel.y    = y;
-	      pixel.ftoa = ftoa;
-	      pixel.tot  = tot;
-	      pixel.toa  = toa;
-	      pixel.ts   = pix_ts;
+	      // store PIXEL struct in vector
 	      pixel_vec.push_back( pixel );
+	      
 	      // print it
+#ifdef TPX3_VERBOSE
 	      printf("[PIXDATA] (%3d,%3d) TOT:%5d TOA:%5d FPGA_TS:%6d       TS:%15llu\n", x , y , tot, toa , fpga_ts, pix_ts);
-	      // pack pixel data into event buffer
-	      //pack( buffer, x );
-	      //pack( buffer, y );
-	      //pack( buffer, ftoa );
-	      //pack( buffer, tot );
-	      //pack( buffer, toa );
+#endif
+#ifdef TPX3_STORE_TXT
 	      fprintf(fp,"%d\n",pix_ts);
 	      fprintf(fa,"p\t%d\n",pix_ts);
-              last_fpga_ts=fpga_ts;
+#endif
 	    } else if( header == 0x5000000000000000 ) { // Or TLU packet header?
+	      struct TRIGGER trigger;
 	      uint64_t fpga_ts;
-	      int int_trg_nr, tlu_trg_nr;
+	      unsigned short int_trg_nr, tlu_trg_nr;
 	      uint64_t trg_timestamp;
 	      //internal trigger number
-	      int_trg_nr = (data >> 45) & 0x7FFF;
+	      trigger.int_nr = (data >> 45) & 0x7FFF;
 	      //TLU trigger number
-	      tlu_trg_nr = (data >> 30) & 0x7FFF;
-	      //tlu_trg_nr = (data >> 31) & 0x3FFF;
+	      trigger.tlu_nr = (data >> 30) & 0x7FFF;
+
 	      //timestamp
 	      trg_timestamp = data & 0x3FFFFFFF;
 	      fpga_ts = (int) ((trg_timestamp>>14) & 0x000000000000FFFF);
+	      if ( fpga_ts < last_fpga_ts-1 )
+		{
+		  unfolded_timestamp += TIMER_EPOCH;
+#ifdef TPX3_VERBOSE
+		  cout << "-- unfolding (trg) --\n";
+#endif
+		} else if ( fpga_ts == last_fpga_ts - 1 )
+		{
+		  trg_timestamp-=TIMER_EPOCH;
+		}
+	      trg_timestamp += unfolded_timestamp;
+	      trg_timestamp <<= 4;
+	      trigger.ts = trg_timestamp;
+              last_fpga_ts = fpga_ts;
 	      
-	      if (fpga_ts<last_fpga_ts)
-	      {
-	        unfolded_timestamp+=0x40000000;
-	        cout << "-- unfolding (trg) --\n";
-	      }
-
-	      trg_timestamp+=unfolded_timestamp;
-	      // -> tlu data
-//	      cout << "[TRIGGERDATA] " << int_trg_nr << "," << tlu_trg_nr << "," << trg_timestamp << endl;
+#ifdef TPX3_VERBOSE
 	      printf("[TRGDATA] tlu_id:%5d int_id:%5d                          TS:%15llu\n", tlu_trg_nr , int_trg_nr, trg_timestamp);
-
-	      // put info in struct and store it in vector
-	      struct TRIGGER trigger;
-	      trigger.tlu_nr = tlu_trg_nr;
-	      trigger.int_nr = int_trg_nr;
-	      trigger.ts     = trg_timestamp;
+#endif
+	      // store TRIGGER struct in vector
 	      trigger_vec.push_back( trigger );
+
+#ifdef TPX3_STORE_TXT
 	      // write in files
               fprintf(ft,"%d\n",trg_timestamp);
               fprintf(fa,"t\t%d\n",trg_timestamp);
-              last_fpga_ts=fpga_ts;
+#endif
 	    }
 	  } // End loop over sample buffer
-
+	  
+	  // If sample buffer is empty, look at available  data and try to build events
+	  unsigned int trg_built = 0;
+	  
 	  // Loop over pixel and trigger vectors
 	  while( trigger_vec.size() > 1 ) {
 	    // Current event
 	    eudaq::RawDataEvent ev( EVENT_TYPE, m_run, m_ev );
 	    std::vector<unsigned char> buffer;
-	    vector< PIXEL > current_pixel_vec;
-	    uint64_t curr_trg_ts = trigger_vec[0].ts;
-	    uint64_t next_trg_ts = trigger_vec[1].ts;
-	    uint64_t max_pixel_ts = ( next_trg_ts + curr_trg_ts ) / 2;
-	    cout << "=====> processing tr_id " << trigger_vec[0].tlu_nr << " ts: " << curr_trg_ts << " max_ts: " << max_pixel_ts << " next_trg_ts: " << next_trg_ts << endl; 
-		
-	    // Loop over pixels 
-	    for( int j = 0; j < pixel_vec.size(); ++j ) {
-	      int curr_pix_ts = pixel_vec[j].ts;
-	      int diff = curr_trg_ts - curr_pix_ts;
-	      if( curr_pix_ts < max_pixel_ts ) {
-		cout << "=====> [MATCH] " << trigger_vec[0].tlu_nr << ", " << curr_trg_ts << ", " << curr_pix_ts << ", " << diff << ", " << pixel_vec[j].x << ", " << pixel_vec[j].y << endl; 
-		current_pixel_vec.push_back( pixel_vec[j] );
-		pixel_vec.erase( pixel_vec.begin() + j );
-		j--;
-	      }
-	    }
 	    
 //	    pack( buffer, trg_id ); !! add trigger number and timestamp here !!
 	    
+	    uint64_t curr_trg_ts = trigger_vec[0].ts;
+	    uint64_t next_trg_ts = trigger_vec[1].ts;
+	    uint64_t max_pixel_ts = ( next_trg_ts + curr_trg_ts ) / 2;
+#ifdef TPX3_VERBOSE
+	    uint64_t fpts=0;
+	    if (pixel_vec.size()>0) fpts=pixel_vec[0].ts;
+	    printf("\n=> processing tr_id %5d  ts: %15llu max_ts: %15llu next_trg_ts: %15llu  (pix vec size: %d, first pix ts: %llu)\n", trigger_vec[0].tlu_nr,curr_trg_ts, max_pixel_ts, next_trg_ts , pixel_vec.size(),fpts);
 
-	    // Pack pixel data into event buffer
-	    for( int k = 0; k < current_pixel_vec.size(); ++k ) {
-	      pack( buffer, current_pixel_vec[k].x );
-	      pack( buffer, current_pixel_vec[k].y );
-	      pack( buffer, current_pixel_vec[k].ftoa );
-	      pack( buffer, current_pixel_vec[k].tot );
-	      pack( buffer, current_pixel_vec[k].toa );
+#endif		
+	    // Loop over pixels 
+	    for( int j = 0; j < pixel_vec.size(); ++j ) {
+	      uint64_t curr_pix_ts = pixel_vec[j].ts;
+	      if( curr_pix_ts < max_pixel_ts ) {
+		
+#ifdef TPX3_STORE_TXT
+		long long diff = (long long)curr_trg_ts - (long long)curr_pix_ts;
+		fprintf(fd,"%lld\n",diff);
+#endif
+#ifdef TPX3_VERBOSE
+		printf("                        +  ts: %15llu diff: %15lld  (pix %3d,%3d)\n", curr_pix_ts, diff, pixel_vec[j].x, pixel_vec[j].y );
+#endif
+		// Pack pixel data into event buffer
+		pack( buffer, pixel_vec[j].x );
+		pack( buffer, pixel_vec[j].y );
+		pack( buffer, pixel_vec[j].tot );
+		pack( buffer, pixel_vec[j].ts );
+		
+		pixel_vec.erase( pixel_vec.begin() + j );
+		j--; // after removing one pixel data packet, need to go back one step in the vector to avoid skipping pixels
+	      }
+	      else if (curr_pix_ts>next_trg_ts) {
+#ifdef TPX3_VERBOSE
+                printf("                        -> break! (%llu > %llu , diff:%llu)\n",curr_pix_ts,next_trg_ts,curr_pix_ts-next_trg_ts  );
+#endif	
+		break;
+	      }
 	    }
+	    
+	    // Remove trigger from vector
 	    trigger_vec.erase( trigger_vec.begin() );
 	    // Add buffer to block
 	    ev.AddBlock( 0, buffer );
@@ -564,55 +607,29 @@ class Timepix3Producer : public eudaq::Producer {
 	    SendEvent(ev);
 	    // Now increment the event number
 	    m_ev++;
+	    trg_built++;
 	  }
+	  float size_proc = size*100.0/BUF_SIZE;
+	  printf( "%c [%10d] Size %7d [%6.2f%%] Triggers %5d  Pixels %6lu       ", 13, cnt, size, size_proc, trg_built, pixel_vec.size() );
+	  fflush( stdout ); 
 	}
       }      
 
-      // while( !stopping ) {
-      // 	int cnt = 0, size, x, y, pixdata, ftoa, tot, toa, timestamp;
-      // 	bool next_sample = true;
-      // 	//while( next_sample ) {
-      // 	// Get a sample of (at most) 1000 pixel data packets, waiting up to 3 s for it
-      // 	next_sample = spidrdaq->getSample( 100, 3000 );
-      // 	if( next_sample ) {
-      // 	  eudaq::RawDataEvent ev( EVENT_TYPE, m_run, m_ev );
-      // 	  std::vector<unsigned char> buffer;
-      // 	  ++cnt;
-      // 	  size = spidrdaq->sampleSize();
-      // 	  cout << "Sample " << cnt << " size=" << size << endl;
-      // 	  while( spidrdaq->nextPixel( &x, &y, &pixdata, &timestamp ) ) {
-      // 	    ftoa = ( pixdata >> 0 ) & ~(~0 << 4);  // [3:0] (4=3-0+1)
-      // 	    tot  = ( pixdata >> 4 ) & ~(~0 << 10); // [13:4] (10=13-4+1)
-      // 	    toa  = ( pixdata >> 14) & ~(~0 << 14); // [27:14] (14=27-14+1)
-      // 	    cout << x << "," << y << ": " << ftoa << "," << tot << "," << toa << "," << timestamp << endl;
-      // 	    //buffer.push_back( '1' );
-      // 	    pack( buffer, x );
-      // 	    pack( buffer, y );
-      // 	    pack( buffer, ftoa );
-      // 	    pack( buffer, tot );
-      // 	    pack( buffer, toa );
-      // 	  }
-      // 	  // Add buffer to block
-      // 	  ev.AddBlock( 0, buffer );
-      // 	  // Send the event to the Data Collector      
-      // 	  SendEvent(ev);
-      // 	  // Now increment the event number
-      // 	  m_ev++;
-      // 	}
-      // }
-
+#ifdef TPX3_STORE_TXT
       fclose(fp);
       fclose(ft);
       fclose(fa);
-
+      fclose(fd);
+#endif      
+      
       // Guess what this does?
       spidrctrl->closeShutter();
 
       // Disble TLU
       if( !spidrctrl->tlu_enable( device_nr, 0 ) ) error_out( "###tlu_enable" );
 
+      // Clean up
       delete spidrdaq;
-
     }
   }
 
