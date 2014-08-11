@@ -38,15 +38,19 @@ namespace eudaq {
     // if it was read out, otherwise it can either return (unsigned)-1,
     // or be left undefined as there is already a default version.
     virtual unsigned GetTriggerID(const Event & ev) const {
-      static const unsigned TRIGGER_OFFSET = 8;
       // Make sure the event is of class RawDataEvent
       if (const RawDataEvent * rev = dynamic_cast<const RawDataEvent *> (&ev)) {
-	// This is just an example, modified it to suit your raw data format
 
-	// Make sure we have at least one block of data, and it is large enough
-	if (rev->NumBlocks() > 0 && rev->GetBlock(0).size() >= (TRIGGER_OFFSET + sizeof(short))) {
-	  // Read a little-endian unsigned short from offset TRIGGER_OFFSET
-	  return getlittleendian<unsigned short> (&rev->GetBlock(0)[TRIGGER_OFFSET]);
+	if ( rev->NumBlocks() > 0 && rev->GetBlock(0).size() >= sizeof(short) ) {
+
+	  std::vector<unsigned char> data = rev->GetBlock( 0 ); // block 0 is trigger data
+	  
+	  // Note: here data has always exactly 12 elements
+	  // [0->7]: TLU trigger timestamp
+	  // [8->9]: TLU trigger number
+	  // [10->11] SPIDR internal trigger number
+
+	  return ( data[8] | data[9] );
 	}
       }
       // If we are unable to extract the Trigger ID, signal with (unsigned)-1
@@ -60,46 +64,46 @@ namespace eudaq {
       // If the event type is used for different sensors
       // they can be differentiated here
       std::string sensortype = "timepix3";
-      
-
-      
+            
       // Unpack data
       const RawDataEvent * rev = dynamic_cast<const RawDataEvent *> ( &ev );
       std::cout << "[Number of blocks] " << rev->NumBlocks() << std::endl;
-      std::vector<unsigned char> data = rev->GetBlock( 0 ); // or 1?
+      std::vector<unsigned char> data = rev->GetBlock( 1 ); // block 1 is pixel data
       std::cout << "vector has size : " << data.size() << std::endl;
 
       // Create a StandardPlane representing one sensor plane
       int id = 0;
       StandardPlane plane(id, EVENT_TYPE, sensortype);
       
+      // Size of one pixel data chunk: 12 bytes = 1+1+2+8 bytes for x,y,tot,ts
+      const unsigned int PIX_SIZE = 12;
+      
       // Set the number of pixels
       int width = 256, height = 256;
-      plane.SetSizeZS(width,height,( data.size() ) / 20 );
+      plane.SetSizeZS( width, height, ( data.size() ) / PIX_SIZE );
       
-      std::vector<unsigned int> ZSDataX;
-      std::vector<unsigned int> ZSDataY;
-      std::vector<unsigned int> ZSDataFTOA;
-      std::vector<unsigned int> ZSDataTOT;
-      std::vector<unsigned int> ZSDataTOA;      
+      std::vector<unsigned char> ZSDataX;
+      std::vector<unsigned char> ZSDataY;
+      std::vector<unsigned short> ZSDataTOT;
+      std::vector<uint64_t> ZSDataTS;      
       size_t offset = 0;
-      unsigned int aWord = 0;
+      unsigned char aWord = 0;
       
-      for( unsigned int i = 0; i < ( data.size() ) / 20; i++ ) { // 20 = 5*4 bytes for x,y,ftoa,tot,toa
+      for( unsigned int i = 0; i < ( data.size() ) / PIX_SIZE; i++ ) {
 
-	ZSDataX.push_back(    unpackPixelData( data, offset + sizeof( aWord ) * 0 ) ); // first 4 bytes
-	ZSDataY.push_back(    unpackPixelData( data, offset + sizeof( aWord ) * 1 ) ); // next 4 bytes
-	ZSDataFTOA.push_back( unpackPixelData( data, offset + sizeof( aWord ) * 2 ) ); // and
-	ZSDataTOT.push_back(  unpackPixelData( data, offset + sizeof( aWord ) * 3 ) ); // so
-	ZSDataTOA.push_back(  unpackPixelData( data, offset + sizeof( aWord ) * 4 ) ); // on
+	ZSDataX   .push_back( unpackXorY( data, offset + sizeof( aWord ) * 0 ) );
+	ZSDataY   .push_back( unpackXorY( data, offset + sizeof( aWord ) * 1 ) );	
+	ZSDataTOT .push_back( unpackTOT(  data, offset + sizeof( aWord ) * 2 ) );
+	ZSDataTS  .push_back( unpackTS(   data, offset + sizeof( aWord ) * 4 ) );
 
-	std::cout << "[DATA] "  << " " << ZSDataX[i] << " " << ZSDataY[i] << " " << ZSDataFTOA[i] << " " << ZSDataTOT[i] << " " << ZSDataTOA[i] << std::endl;
+	offset += sizeof( aWord ) * PIX_SIZE; 
 
-	offset += sizeof( aWord ) * 5; // shift by 20 bytes to reach next pixel info 
+	std::cout << "[DATA] "  << " " << (int)ZSDataX[i] << " " << (int)ZSDataY[i] << " " << ZSDataTOT[i] << " " << ZSDataTS[i] << std::endl;
+
       }
 
       // Set the trigger ID
-      // plane.SetTLUEvent(GetTriggerID(ev));
+      plane.SetTLUEvent( GetTriggerID(ev) );
       
       for( size_t i = 0 ; i < ZSDataX.size(); ++i ) {
 	plane.PushPixel( ZSDataX[i], ZSDataY[i], ZSDataTOT[i] );
@@ -112,14 +116,24 @@ namespace eudaq {
       return true;
     }
 
-    unsigned int unpackPixelData( std::vector<unsigned char> data, size_t offset ) const {
-
-      unsigned int aWord = 0;
-      for( unsigned int j=0; j<4; j++ ) {
-	aWord = aWord | ( data[offset+j] << j*8 );
+    unsigned char unpackXorY( std::vector<unsigned char> data, size_t offset ) const {
+      return data[offset];
+    }
+ 
+    unsigned short unpackTOT(  std::vector<unsigned char> data, size_t offset ) const {
+      unsigned short tot = 0;
+      for( unsigned int j = 0; j < 2; j++ ) {
+	tot = tot | ( data[offset+j] << j*8 );
       }
+      return tot;
+    }
 
-      return aWord;
+    uint64_t unpackTS( std::vector<unsigned char> data, size_t offset ) const {
+      uint64_t ts = 0; 
+      for( unsigned int j = 0; j < 8; j++ ) {
+	ts = ts | ( data[offset+j] << j*8 );
+      }
+      return ts;
     }
     
 #if USE_LCIO
@@ -152,41 +166,4 @@ namespace eudaq {
 } // namespace eudaq
 
 
-/*
-Start Run: 42
-Sample 1 size=104
-128,254: 13,2,5376,52832
-130,252: 11,3,5376,52832
-132,254: 13,2,5376,52832
-134,253: 13,2,5376,52832
-136,254: 13,3,5376,52832
-139,254: 13,2,5376,52832
-140,254: 13,2,5376,52832
-142,252: 13,2,5376,52832
-144,252: 12,2,5376,52832
-146,252: 12,2,5376,52832
-149,254: 13,2,5376,52832
-150,252: 11,3,5376,52832
-152,254: 13,2,5376,52832
-Sample 1 size=104
-142,214: 13,3,5376,52846
-145,210: 13,3,5376,52846
-147,215: 13,2,5376,52846
-149,212: 13,2,5376,52846
-151,214: 13,3,5376,52846
-152,211: 12,2,5376,52846
-155,202: 13,3,5376,52846
-157,201: 13,3,5376,52846
-159,146: 15,2,5376,52846
-161,162: 14,3,5376,52846
-163,30: 15,1,5376,52846
-164,73: 15,2,5376,52846
-167,23: 15,1,5376,52846
-Sample 1 size=8
-80,166: 14,1022,5376,27944
-Sample 1 size=8
-80,166: 12,1022,504,28261
-Sample 1 size=8
-80,166: 1,1022,4492,38561
-Sample 1 size=8
-*/
+

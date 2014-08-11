@@ -557,13 +557,26 @@ class Timepix3Producer : public eudaq::Producer {
 	  while( trigger_vec.size() > 1 ) {
 	    // Current event
 	    eudaq::RawDataEvent ev( EVENT_TYPE, m_run, m_ev );
-	    std::vector<unsigned char> buffer;
+	    std::vector<unsigned char> bufferTrg;
+	    std::vector<unsigned char> bufferPix;
 	    
-//	    pack( buffer, trg_id ); !! add trigger number and timestamp here !!
+	    // pack( buffer, trg_id ); !! add trigger number and timestamp here !!
 	    
 	    uint64_t curr_trg_ts = trigger_vec[0].ts;
 	    uint64_t next_trg_ts = trigger_vec[1].ts;
 	    uint64_t max_pixel_ts = ( next_trg_ts + curr_trg_ts ) / 2;
+
+	    uint64_t curr_tlu_nr = trigger_vec[0].tlu_nr;
+	    uint64_t curr_int_nr = trigger_vec[0].int_nr;
+	    
+	    // pack TLU info in its buffer
+	    pack( bufferTrg, curr_trg_ts);
+	    pack( bufferTrg, curr_tlu_nr);
+	    pack( bufferTrg, curr_int_nr);
+
+	    // and add it to the event
+	    ev.AddBlock( 0, bufferTrg );
+
 #ifdef TPX3_VERBOSE
 	    uint64_t fpts=0;
 	    if (pixel_vec.size()>0) fpts=pixel_vec[0].ts;
@@ -583,15 +596,15 @@ class Timepix3Producer : public eudaq::Producer {
 		printf("                        +  ts: %15llu diff: %15lld  (pix %3d,%3d)\n", curr_pix_ts, diff, pixel_vec[j].x, pixel_vec[j].y );
 #endif
 		// Pack pixel data into event buffer
-		pack( buffer, pixel_vec[j].x );
-		pack( buffer, pixel_vec[j].y );
-		pack( buffer, pixel_vec[j].tot );
-		pack( buffer, pixel_vec[j].ts );
+		pack( bufferPix, pixel_vec[j].x );
+		pack( bufferPix, pixel_vec[j].y );
+		pack( bufferPix, pixel_vec[j].tot );
+		pack( bufferPix, pixel_vec[j].ts );
 		
 		pixel_vec.erase( pixel_vec.begin() + j );
 		j--; // after removing one pixel data packet, need to go back one step in the vector to avoid skipping pixels
 	      }
-	      else if (curr_pix_ts>next_trg_ts) {
+	      else if( curr_pix_ts > next_trg_ts ) {
 #ifdef TPX3_VERBOSE
                 printf("                        -> break! (%llu > %llu , diff:%llu)\n",curr_pix_ts,next_trg_ts,curr_pix_ts-next_trg_ts  );
 #endif	
@@ -602,7 +615,7 @@ class Timepix3Producer : public eudaq::Producer {
 	    // Remove trigger from vector
 	    trigger_vec.erase( trigger_vec.begin() );
 	    // Add buffer to block
-	    ev.AddBlock( 0, buffer );
+	    ev.AddBlock( 1, bufferPix );
 	    // Send the event to the Data Collector      
 	    SendEvent(ev);
 	    // Now increment the event number
