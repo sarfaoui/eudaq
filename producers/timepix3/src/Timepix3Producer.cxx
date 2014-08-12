@@ -119,8 +119,8 @@ class Timepix3Producer : public eudaq::Producer {
     int device_id = -1;
     if( !spidrctrl->getDeviceId( device_nr, &device_id ) ) error_out( "###getDeviceId" );
     //cout << "Device ID: " << device_id << endl;
-    string chipID = myTimepix3Config->getChipID( device_id );
-    cout << "[Timepix3] Chip ID: " << chipID << endl;
+    m_chipID = myTimepix3Config->getChipID( device_id );
+    cout << "[Timepix3] Chip ID: " << m_chipID << endl;
 
     // Get DACs from XML config
     map< string, int > xml_dacs = myTimepix3Config->getDeviceDACs();
@@ -358,6 +358,9 @@ class Timepix3Producer : public eudaq::Producer {
       bore.SetTag( "VBias", actualBiasVoltage );
     }
     
+    // Chip ID
+    bore.SetTag( "ChipID", m_chipID );
+
     // Read band gap temperature, whatever that is
     //int temp = -1;
     //if( !spidrctrl->setSenseDac( device_nr, 29 ) ) error_out( "###setSenseDac" );
@@ -692,7 +695,7 @@ private:
   int m_spidrPort;
   int device_nr = 0;
   bool stopping, done,started;
-  string m_spidrIP, m_xmlfileName, m_time;
+  string m_spidrIP, m_xmlfileName, m_time, m_chipID;
   Timepix3Config *myTimepix3Config;
   SpidrController *spidrctrl;
   SpidrDaq *spidrdaq;
