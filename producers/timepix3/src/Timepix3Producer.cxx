@@ -293,7 +293,8 @@ class Timepix3Producer : public eudaq::Producer {
       k2450 = new Keithley2450( m_gpib_num );
       //k2450->OutputOff();
       //sleep(1);
-      k2450->SetMeasureCurrent();
+      //k2450->SetMeasureCurrent();
+      k2450->SetMeasureVoltage();
       sleep(1);
       k2450->SetSourceVoltage4W();
       sleep(1);
@@ -325,10 +326,6 @@ class Timepix3Producer : public eudaq::Producer {
     std::cout << "Start Run: " << m_run << std::endl;
     
     // Bias scan
-    // Do_Bias_Scan = 1
-    // V_start = 85
-    // V_nSteps = 3
-    // V_return = 92
     double newBiasVoltage = m_Vstart + m_VstepCount*m_VbiasStep;
     if( m_use_k2450 == 1 && m_doBiasScan == 1 ) {
       if ( newBiasVoltage <= m_VbiasMax ) {
@@ -345,8 +342,17 @@ class Timepix3Producer : public eudaq::Producer {
     eudaq::RawDataEvent bore(eudaq::RawDataEvent::BORE(EVENT_TYPE, m_run));
     // You can set tags on the BORE that will be saved in the data file
     // and can be used later to help decoding
+
+    // TPX3 SpidrMan XML config
     bore.SetTag( "XMLConfig", eudaq::to_string( m_xmlfileName ) );
-    bore.SetTag( "VBias", m_Vbias );
+
+    // Put measured bias voltage in BORE
+    if ( m_use_k2450 == 1 ) {
+      sleep(1);
+      double actualBiasVoltage = k2450->ReadVoltage();
+      bore.SetTag( "VBias", actualBiasVoltage );
+    }
+
     // Send the event to the Data Collector
     SendEvent(bore);
     
