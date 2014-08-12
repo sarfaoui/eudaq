@@ -90,6 +90,9 @@ class Timepix3Producer : public eudaq::Producer {
     // with address 192.168.100.10, default port number 50000
     spidrctrl = new SpidrController( ip[0], ip[1], ip[2], ip[3], m_spidrPort );
 
+    // Reset Device
+    if( !spidrctrl->reinitDevice( device_nr ) ) error_out( "###resetDevice" );
+
     // Are we connected to the SPIDR-TPX3 module?
     if( !spidrctrl->isConnected() ) {
       std::cout << spidrctrl->ipAddressString() << ": " << spidrctrl->connectionStateString() << ", " << spidrctrl->connectionErrString() << std::endl;
@@ -348,7 +351,7 @@ class Timepix3Producer : public eudaq::Producer {
 
     // Put measured bias voltage in BORE
     if ( m_use_k2450 == 1 ) {
-      sleep(1);
+      sleep(1); // wait for ramp up
       double actualBiasVoltage = k2450->ReadVoltage();
       bore.SetTag( "VBias", actualBiasVoltage );
     }
