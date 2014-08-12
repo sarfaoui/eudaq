@@ -27,7 +27,7 @@ using namespace std;
 // Structure to store pixel info
 struct PIXEL
 {
-  unsigned char  x, y;
+  unsigned char x, y;
   unsigned short tot;
   uint64_t ts;
 };
@@ -279,25 +279,29 @@ class Timepix3Producer : public eudaq::Producer {
     }
     
     // Keithley stuff
-    int use_k2450 = config.Get( "USE_Keithley", 0 );
-    if( use_k2450 == 1 ) {
+    m_use_k2450   = config.Get( "USE_Keithley", 0 );
+    m_gpib_num    = config.Get( "Keithley_GPIB", 18 );
+    m_Vbias       = config.Get( "V_Bias", 0 );
+    m_Ilim        = config.Get( "I_Limit", 1e-6 );
+    m_doBiasScan  = config.Get( "Do_Bias_Scan", 0 );
+    m_Vstart      = config.Get( "V_start", 0 );
+    m_VbiasStep   = config.Get( "V_step", 0 );
+    m_VbiasMax    = config.Get( "V_max", 0 );
+    m_Vreturn     = config.Get( "V_return", 0 );
+    if( m_use_k2450 == 1 ) {
       cout << endl;
-      int gpib_num = config.Get( "Keithley_GPIB", 18 );
-      k2450 = new Keithley2450( gpib_num );
-      m_Vbias = config.Get( "V_Bias", 0. );
-      m_Ilim = config.Get( "I_Limit", 1e-6 );
-      k2450->OutputOff();
-      sleep(1);
+      k2450 = new Keithley2450( m_gpib_num );
+      //k2450->OutputOff();
+      //sleep(1);
       k2450->SetMeasureCurrent();
       sleep(1);
       k2450->SetSourceVoltage4W();
-      sleep(1);
-      k2450->SetOutputVoltage( m_Vbias );
       sleep(1);
       k2450->SetOutputVoltageCurrentLimit( m_Ilim );
       sleep(1);
       k2450->OutputOn();
     }
+    m_VstepCount = 0;
 
     // At the end, set the status that will be displayed in the Run Control.
     SetStatus(eudaq::Status::LVL_OK, "Configured (" + config.Name() + ")");
@@ -320,6 +324,23 @@ class Timepix3Producer : public eudaq::Producer {
     
     std::cout << "Start Run: " << m_run << std::endl;
     
+    // Bias scan
+    // Do_Bias_Scan = 1
+    // V_start = 85
+    // V_nSteps = 3
+    // V_return = 92
+    double newBiasVoltage = m_Vstart + m_VstepCount*m_VbiasStep;
+    if( m_use_k2450 == 1 && m_doBiasScan == 1 ) {
+      if ( newBiasVoltage <= m_VbiasMax ) {
+	k2450->SetOutputVoltage( newBiasVoltage ); 
+	m_VstepCount++;
+      } else {
+	k2450->SetOutputVoltage( m_Vreturn ); 
+      }
+    } else {
+      k2450->SetOutputVoltage( m_Vbias ); 
+    }
+
     // It must send a BORE to the Data Collector
     eudaq::RawDataEvent bore(eudaq::RawDataEvent::BORE(EVENT_TYPE, m_run));
     // You can set tags on the BORE that will be saved in the data file
@@ -659,7 +680,9 @@ private:
   SpidrController *spidrctrl;
   SpidrDaq *spidrdaq;
   Keithley2450 *k2450;
-  double m_Vbias, m_Ilim;
+  int m_use_k2450, m_gpib_num;
+  double m_Vbias, m_Ilim, m_Vstart, m_Vreturn, m_VbiasMax;
+  int m_doBiasScan, m_VstepCount, m_VbiasStep;
 };
 
 
