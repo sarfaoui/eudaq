@@ -45,6 +45,8 @@ public:
     
   void unpackGeneralConfig( int config );
 
+  string getChipID( int deviceID );
+
 private:
   
   const char* m_time;

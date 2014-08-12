@@ -207,75 +207,32 @@ void Timepix3Config::unpackGeneralConfig( int config ) {
   }
 
   cout << endl;
-
 }
 
+string Timepix3Config::getChipID( int deviceID ) {
 
+  if ( deviceID == 0 ) return "--";
 
-/*
-  <registers>
-    <reg name="IBIAS_PREAMP_ON" value="128"/>
-    <reg name="IBIAS_PREAMP_OFF" value="8"/>
-    <reg name="VPREAMP_NCAS" value="128"/>
-    <reg name="IBIAS_IKRUM" value="15"/>
-    <reg name="VFBK" value="164"/>
-    <reg name="VTHRESH" value="1182"/>
-    <reg name="IBIAS_DISCS1_ON" value="128"/>
-    <reg name="IBIAS_DISCS1_OFF" value="8"/>
-    <reg name="IBIAS_DISCS2_ON" value="32"/>
-    <reg name="IBIAS_DISCS2_OFF" value="8"/>
-    <reg name="IBIAS_PIXELDAC" value="128"/>
-    <reg name="IBIAS_TPBUFIN" value="128"/>
-    <reg name="IBIAS_TPBUFOUT" value="128"/>
-    <reg name="VTP_COARSE" value="128"/>
-    <reg name="VTP_FINE" value="256"/>
-    <reg name="GeneralConfig" value="0x00000048"/>
-    <reg name="PllConfig" value="0x0000281e"/>
-    <reg name="OutputBlockConfig" value="0x00007b01"/>
-  </registers>
-*/
+  int x, y, w, mod, mod_val;
+  x = deviceID & 0xF;
+  y = ( deviceID >> 4 ) & 0xF;
+  w = ( deviceID >> 8 ) & 0xFFF;
+  mod = ( deviceID >> 20 ) & 0x3;
+  mod_val = ( deviceID >> 22 ) & 0x3FF;
+  
+  if( mod == 1 ) {
+    x = mod_val & 0xF;
+  } else if( mod == 2 ) {
+    y = mod_val & 0xF;
+  } else if( mod == 3 ) {
+    w = w & ~(0x3FF);
+    w |= ( mod_val & 0x3FF );
+  }
+  char xs = (char) ( 64 + x );
 
-
-/*
-XMLDocument doc;
-  doc.LoadFile( configFileName.c_str() ); // "/home/vertextb/SPIDR/software/trunk/python/ui/x.t3x"
-
-  XMLNode* root = doc.FirstChild(); // <?xml version="1.0" ?>
-  XMLNode* tpix3 = root->NextSibling(); // <Timepix3>
-
-  for( XMLElement* elem = tpix3->FirstChildElement(); elem != NULL; elem = elem->NextSiblingElement()) {
-    /*
-    string elemName = elem->Value();
-    cout << "\tElement name = " << elemName << endl;
-
-    for( XMLElement* elemChild = elem->FirstChildElement(); elemChild != NULL; elemChild = elemChild->NextSiblingElement()) {
-      
-      string elemChildName = elemChild->Value();
-      cout << "\t\tElement child name = " << elemChildName << endl;
-
-      const char* time = elemChild->Attribute( "time" ); 
-      if( time!= NULL ) {
-	cout << "\t\t\tThe chip was configured on: " << time << endl;
-	m_time = time;
-      }
-      const char* user = elemChild->Attribute( "user" );
-      if( user!= NULL ) {
-	cout << "\t\t\tUsername: " << user << endl;
-	m_user = user;
-      }
-      const char* host = elemChild->Attribute( "host" ); 
-      if( host!= NULL ) {
-	cout << "\t\t\tHostname: " << host << endl;
-	m_host = host;
-      }
-      
-      const char* name = elemChild->Attribute( "name" );
-      if( name != NULL ) {
-      if( name == "IBIAS_PREAMP_ON" ) {
-      const char* val = elemChild->Attribute( "value" );
-      cout << "IBIAS_PREAMP_ON = " << val << endl;
-      }
-      
-      }
-      }
-    */
+  std::ostringstream oss;
+  oss << "W" << w << "_" << xs << y;
+  string chipID = oss.str();
+  
+  return chipID;
+}

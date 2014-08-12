@@ -91,7 +91,7 @@ class Timepix3Producer : public eudaq::Producer {
     spidrctrl = new SpidrController( ip[0], ip[1], ip[2], ip[3], m_spidrPort );
 
     // Reset Device
-    if( !spidrctrl->reinitDevice( device_nr ) ) error_out( "###resetDevice" );
+    if( !spidrctrl->reinitDevice( device_nr ) ) error_out( "###reinitDevice" );
 
     // Are we connected to the SPIDR-TPX3 module?
     if( !spidrctrl->isConnected() ) {
@@ -116,9 +116,11 @@ class Timepix3Producer : public eudaq::Producer {
     if( !spidrctrl->resetPixels( device_nr ) ) error_out( "###resetPixels" );
     
     // Device ID
-    //int device_id = -1;
-    //if( !spidrctrl->getDeviceId( device_nr, &device_id ) ) error_out( "###getDeviceId" );
+    int device_id = -1;
+    if( !spidrctrl->getDeviceId( device_nr, &device_id ) ) error_out( "###getDeviceId" );
     //cout << "Device ID: " << device_id << endl;
+    string chipID = myTimepix3Config->getChipID( device_id );
+    cout << "[Timepix3] Chip ID: " << chipID << endl;
 
     // Get DACs from XML config
     map< string, int > xml_dacs = myTimepix3Config->getDeviceDACs();
@@ -355,6 +357,12 @@ class Timepix3Producer : public eudaq::Producer {
       double actualBiasVoltage = k2450->ReadVoltage();
       bore.SetTag( "VBias", actualBiasVoltage );
     }
+    
+    // Read band gap temperature, whatever that is
+    //int temp = -1;
+    //if( !spidrctrl->setSenseDac( device_nr, 29 ) ) error_out( "###setSenseDac" );
+    //if( !spidrctrl->getDac( device_nr, 29, &temp ) ) error_out( "###getDac" );
+    //cout << "[Timepix3] Temperature voltage = " << temp << " V?" << endl;
 
     // Send the event to the Data Collector
     SendEvent(bore);
