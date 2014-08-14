@@ -332,15 +332,17 @@ class Timepix3Producer : public eudaq::Producer {
     
     // Bias scan
     double newBiasVoltage = m_Vstart + m_VstepCount*m_VbiasStep;
-    if( m_use_k2450 == 1 && m_doBiasScan == 1 ) {
-      if ( newBiasVoltage <= m_VbiasMax ) {
-	k2450->SetOutputVoltage( newBiasVoltage ); 
-	m_VstepCount++;
+    if( m_use_k2450 == 1 ) {
+      if( m_doBiasScan == 1 ) {
+	if ( newBiasVoltage <= m_VbiasMax ) {
+	  k2450->SetOutputVoltage( newBiasVoltage ); 
+	  m_VstepCount++;
+	} else {
+	  k2450->SetOutputVoltage( m_Vreturn ); 
+	}
       } else {
-	k2450->SetOutputVoltage( m_Vreturn ); 
+	k2450->SetOutputVoltage( m_Vbias ); 
       }
-    } else {
-      k2450->SetOutputVoltage( m_Vbias ); 
     }
 
     // It must send a BORE to the Data Collector
