@@ -237,27 +237,27 @@ class Timepix3Producer : public eudaq::Producer {
     }
 
     // Enable test-pulses for some pixels
-    spidrctrl->setCtprBit( 16 );
-    spidrctrl->setCtprBit( 86 );
-    spidrctrl->setCtprBit( 26 );
-    spidrctrl->setCtprBit( 96 );
-    if( !spidrctrl->setCtpr( device_nr ) ) error_out( "###setCtpr" );
-    spidrctrl->setPixelTestEna( 16, 16, true );
-    spidrctrl->setPixelTestEna( 16, 216, true );
-    spidrctrl->setPixelTestEna( 16, 26, true );
-    spidrctrl->setPixelTestEna( 16, 146, true );
-    spidrctrl->setPixelTestEna( 26, 36, true );
-    spidrctrl->setPixelTestEna( 26, 136, true );
-    spidrctrl->setPixelTestEna( 26, 46, true );
-    spidrctrl->setPixelTestEna( 26, 126, true );
-    spidrctrl->setPixelTestEna( 86, 16, true );
-    spidrctrl->setPixelTestEna( 86, 216, true );
-    spidrctrl->setPixelTestEna( 86, 26, true );
-    spidrctrl->setPixelTestEna( 86, 146, true );
-    spidrctrl->setPixelTestEna( 96, 36, true );
-    spidrctrl->setPixelTestEna( 96, 136, true );
-    spidrctrl->setPixelTestEna( 96, 46, true );
-    spidrctrl->setPixelTestEna( 96, 126, true );
+    // spidrctrl->setCtprBit( 16 );
+    // spidrctrl->setCtprBit( 86 );
+    // spidrctrl->setCtprBit( 26 );
+    // spidrctrl->setCtprBit( 96 );
+    // if( !spidrctrl->setCtpr( device_nr ) ) error_out( "###setCtpr" );
+    // spidrctrl->setPixelTestEna( 16, 16, true );
+    // spidrctrl->setPixelTestEna( 16, 216, true );
+    // spidrctrl->setPixelTestEna( 16, 26, true );
+    // spidrctrl->setPixelTestEna( 16, 146, true );
+    // spidrctrl->setPixelTestEna( 26, 36, true );
+    // spidrctrl->setPixelTestEna( 26, 136, true );
+    // spidrctrl->setPixelTestEna( 26, 46, true );
+    // spidrctrl->setPixelTestEna( 26, 126, true );
+    // spidrctrl->setPixelTestEna( 86, 16, true );
+    // spidrctrl->setPixelTestEna( 86, 216, true );
+    // spidrctrl->setPixelTestEna( 86, 26, true );
+    // spidrctrl->setPixelTestEna( 86, 146, true );
+    // spidrctrl->setPixelTestEna( 96, 36, true );
+    // spidrctrl->setPixelTestEna( 96, 136, true );
+    // spidrctrl->setPixelTestEna( 96, 46, true );
+    // spidrctrl->setPixelTestEna( 96, 126, true );
 
     // Actually set the pixel thresholds and mask
     if( !spidrctrl->setPixelConfig( device_nr ) ) {
@@ -339,9 +339,11 @@ class Timepix3Producer : public eudaq::Producer {
 	  m_VstepCount++;
 	} else {
 	  k2450->SetOutputVoltage( m_Vreturn ); 
+	  newBiasVoltage = m_Vreturn;
 	}
       } else {
 	k2450->SetOutputVoltage( m_Vbias ); 
+	newBiasVoltage = m_Vbias;
       }
     }
 
@@ -355,9 +357,10 @@ class Timepix3Producer : public eudaq::Producer {
 
     // Put measured bias voltage in BORE
     if ( m_use_k2450 == 1 ) {
-      sleep(1); // wait for ramp up
+      sleep(2); // wait for ramp up
       double actualBiasVoltage = k2450->ReadVoltage();
-      bore.SetTag( "VBias", actualBiasVoltage );
+      bore.SetTag( "VBiasActual", actualBiasVoltage );
+      bore.SetTag( "VBiasSet", newBiasVoltage );
     }
     
     // Chip ID
