@@ -35,7 +35,12 @@ public:
 	  }
 	}
 	void MainLoop() {
+		
+		FILE *ftlu;
+		ftlu = fopen("/home/vertextb/eudaq/build/tlu.txt","w");
+
 		do {
+	
 			if (!m_tlu) {
 				eudaq::mSleep(50);
 				continue;
@@ -63,6 +68,8 @@ public:
 					if (m_ev < 10 || m_ev % 1000 == 0) {
 						std::cout << "  " << m_tlu->GetEntry(i) << ", diff=" << d << (d <= 0 ? "  ***" : "") << ", freq=" << freq << std::endl;
 					}
+					fprintf(ftlu,"%d\t%ld\n",m_ev,t);
+					fflush(ftlu);
 					lasttime = t;
 					TLUEvent ev(m_run, m_ev, t);
 					ev.SetTag("trigger",m_tlu->GetEntry(i).trigger2String());
@@ -80,12 +87,16 @@ public:
 //           std::cout << "." << std::flush;
 //         }
 			}
+			
 			if (JustStopped) {
 				m_tlu->Update(timestamps);
 				SendEvent(TLUEvent::EORE(m_run, ++m_ev));
 				TLUJustStopped = false;
 			}
 		} while (!done);
+		
+		fclose(ftlu);
+		
 	}
 	virtual void OnConfigure(const eudaq::Configuration & param) {
 		SetStatus(eudaq::Status::LVL_OK, "Wait");
