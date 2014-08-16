@@ -296,8 +296,8 @@ class Timepix3Producer : public eudaq::Producer {
     if( m_use_k2450 == 1 ) {
       cout << endl;
       k2450 = new Keithley2450( m_gpib_num );
-      //k2450->OutputOff();
-      //sleep(1);
+      k2450->OutputOff();
+      sleep(1);
       //k2450->SetMeasureCurrent();
       k2450->SetMeasureVoltage();
       sleep(1);
