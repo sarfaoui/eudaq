@@ -144,6 +144,7 @@ class Timepix3Producer : public eudaq::Producer {
       } else if( name == "VTHRESH" ) {
 	int coarse = val / 160;
 	int fine = val - coarse*160 + 352;
+	m_xml_VTHRESH = val;
 	if( !spidrctrl->setDac( device_nr, TPX3_VTHRESH_COARSE, coarse ) ) {
 	  cout << "Error, could not set VTHRESH_COARSE." << endl;
 	} else {
@@ -309,6 +310,14 @@ class Timepix3Producer : public eudaq::Producer {
     }
     m_VstepCount = 0;
 
+	// Threshold scan conf params
+	m_do_threshold_scan = config.Get( "do_threshold_scan", 0 );
+	m_threshold_start   = config.Get( "threshold_start", m_xml_VTHRESH );
+	m_threshold_step    = config.Get( "threshold_step", 0 );	
+	m_threshold_max     = config.Get( "threshold_max", m_xml_VTHRESH );
+	m_threshold_return  = config.Get( "threshold_return", m_xml_VTHRESH );
+	m_threshold_count   = 0;
+
     // At the end, set the status that will be displayed in the Run Control.
     SetStatus(eudaq::Status::LVL_OK, "Configured (" + config.Name() + ")");
 
@@ -329,6 +338,11 @@ class Timepix3Producer : public eudaq::Producer {
     m_ev = 0;
     
     std::cout << "Start Run: " << m_run << std::endl;
+
+	// It must send a BORE to the Data Collector
+    eudaq::RawDataEvent bore(eudaq::RawDataEvent::BORE(EVENT_TYPE, m_run));
+    // You can set tags on the BORE that will be saved in the data file
+    // and can be used later to help decoding
     
     // Bias scan
     double newBiasVoltage = m_Vstart + m_VstepCount*m_VbiasStep;
@@ -347,10 +361,27 @@ class Timepix3Producer : public eudaq::Producer {
       }
     }
 
-    // It must send a BORE to the Data Collector
-    eudaq::RawDataEvent bore(eudaq::RawDataEvent::BORE(EVENT_TYPE, m_run));
-    // You can set tags on the BORE that will be saved in the data file
-    // and can be used later to help decoding
+	// Threshold scan
+	int newThreshold = m_threshold_start + m_threshold_count*m_threshold_step;
+	if( m_do_threshold_scan == 1 ) {
+		int coarse = newThreshold / 160;
+		int fine = newThreshold - coarse*160 + 352;	
+		if( newThreshold <= m_threshold_max ) {
+			if( !spidrctrl->setDac( device_nr, TPX3_VTHRESH_COARSE, coarse ) ) error_out( "###setDac" );
+			if( !spidrctrl->setDac( device_nr, TPX3_VTHRESH_FINE, fine ) ) error_out( "###setDac" );
+			m_threshold_count++;
+		} else {
+			int coarse = m_threshold_return / 160;
+			int fine = m_threshold_return - coarse*160 + 352;
+			if( !spidrctrl->setDac( device_nr, TPX3_VTHRESH_COARSE, coarse ) ) error_out( "###setDac" );
+			if( !spidrctrl->setDac( device_nr, TPX3_VTHRESH_FINE, fine ) ) error_out( "###setDac" );
+			newThreshold = 	m_threshold_return;
+		}
+	} else {
+		newThreshold = m_xml_VTHRESH;
+	}
+	cout << "[Timepix3] Threshold = " << newThreshold << endl;
+	bore.SetTag( "VTRESH", newThreshold );
 
     // TPX3 SpidrMan XML config
     bore.SetTag( "XMLConfig", eudaq::to_string( m_xmlfileName ) );
@@ -714,6 +745,8 @@ private:
   int m_use_k2450, m_gpib_num;
   double m_Vbias, m_Ilim, m_Vstart, m_Vreturn, m_VbiasMax;
   int m_doBiasScan, m_VstepCount, m_VbiasStep;
+  int m_xml_VTHRESH;
+  int m_do_threshold_scan, m_threshold_start, m_threshold_step, m_threshold_max, m_threshold_return, m_threshold_count;
 };
 
 
