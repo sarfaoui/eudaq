@@ -367,10 +367,16 @@ class Timepix3Producer : public eudaq::Producer {
     bore.SetTag( "ChipID", m_chipID );
 
     // Read band gap temperature, whatever that is
-    //int temp = -1;
-    //if( !spidrctrl->setSenseDac( device_nr, 29 ) ) error_out( "###setSenseDac" );
-    //if( !spidrctrl->getDac( device_nr, 29, &temp ) ) error_out( "###getDac" );
-    //cout << "[Timepix3] Temperature voltage = " << temp << " V?" << endl;
+	int bg_temp_adc, bg_output_adc;
+	if( !spidrctrl->setSenseDac( device_nr, TPX3_BANDGAP_TEMP ) ) error_out( "###setSenseDac" );
+	if( !spidrctrl->getAdc( &bg_temp_adc, 64 ) ) error_out( "###getAdc" );   	
+	float bg_temp_V = 1.5*( bg_temp_adc/64. )/4096;
+	if( !spidrctrl->setSenseDac( device_nr, TPX3_BANDGAP_OUTPUT ) ) error_out( "###setSenseDac" );
+	if( !spidrctrl->getAdc( &bg_output_adc, 64 ) ) error_out( "###getAdc" );   	
+	float bg_output_V = 1.5*( bg_output_adc/64. )/4096;
+	float temp = 88.75 - 607.3 * ( bg_temp_V - bg_output_V);
+	cout << "[Timepix3] Temperature is " << temp << " C" << endl;
+	bore.SetTag( "Temperature", temp );
 
     // Send the event to the Data Collector
     SendEvent(bore);
