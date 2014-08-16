@@ -361,28 +361,28 @@ class Timepix3Producer : public eudaq::Producer {
       }
     }
 
-	// Threshold scan
-	int newThreshold = m_threshold_start + m_threshold_count*m_threshold_step;
-	if( m_do_threshold_scan == 1 ) {
-		int coarse = newThreshold / 160;
-		int fine = newThreshold - coarse*160 + 352;	
-		if( newThreshold <= m_threshold_max ) {
-			if( !spidrctrl->setDac( device_nr, TPX3_VTHRESH_COARSE, coarse ) ) error_out( "###setDac" );
-			if( !spidrctrl->setDac( device_nr, TPX3_VTHRESH_FINE, fine ) ) error_out( "###setDac" );
-			m_threshold_count++;
-		} else {
-			int coarse = m_threshold_return / 160;
-			int fine = m_threshold_return - coarse*160 + 352;
-			if( !spidrctrl->setDac( device_nr, TPX3_VTHRESH_COARSE, coarse ) ) error_out( "###setDac" );
-			if( !spidrctrl->setDac( device_nr, TPX3_VTHRESH_FINE, fine ) ) error_out( "###setDac" );
-			newThreshold = 	m_threshold_return;
-		}
-	} else {
-		newThreshold = m_xml_VTHRESH;
-	}
-	cout << "[Timepix3] Threshold = " << newThreshold << endl;
-	bore.SetTag( "VTRESH", newThreshold );
-
+    // Threshold scan
+    int newThreshold = m_threshold_start + m_threshold_count*m_threshold_step;
+    if( m_do_threshold_scan == 1 ) {
+      int coarse = newThreshold / 160;
+      int fine = newThreshold - coarse*160 + 352;	
+      if( newThreshold <= m_threshold_max ) {
+	if( !spidrctrl->setDac( device_nr, TPX3_VTHRESH_COARSE, coarse ) ) error_out( "###setDac" );
+	if( !spidrctrl->setDac( device_nr, TPX3_VTHRESH_FINE, fine ) ) error_out( "###setDac" );
+	m_threshold_count++;
+      } else {
+	int coarse = m_threshold_return / 160;
+	int fine = m_threshold_return - coarse*160 + 352;
+	if( !spidrctrl->setDac( device_nr, TPX3_VTHRESH_COARSE, coarse ) ) error_out( "###setDac" );
+	if( !spidrctrl->setDac( device_nr, TPX3_VTHRESH_FINE, fine ) ) error_out( "###setDac" );
+	newThreshold = 	m_threshold_return;
+      }
+    } else {
+      newThreshold = m_xml_VTHRESH;
+    }
+    cout << "[Timepix3] Threshold = " << newThreshold << endl;
+    bore.SetTag( "VTRESH", newThreshold );
+    
     // TPX3 SpidrMan XML config
     bore.SetTag( "XMLConfig", eudaq::to_string( m_xmlfileName ) );
 
@@ -398,17 +398,17 @@ class Timepix3Producer : public eudaq::Producer {
     bore.SetTag( "ChipID", m_chipID );
 
     // Read band gap temperature, whatever that is
-	int bg_temp_adc, bg_output_adc;
-	if( !spidrctrl->setSenseDac( device_nr, TPX3_BANDGAP_TEMP ) ) error_out( "###setSenseDac" );
-	if( !spidrctrl->getAdc( &bg_temp_adc, 64 ) ) error_out( "###getAdc" );   	
-	float bg_temp_V = 1.5*( bg_temp_adc/64. )/4096;
-	if( !spidrctrl->setSenseDac( device_nr, TPX3_BANDGAP_OUTPUT ) ) error_out( "###setSenseDac" );
-	if( !spidrctrl->getAdc( &bg_output_adc, 64 ) ) error_out( "###getAdc" );   	
-	float bg_output_V = 1.5*( bg_output_adc/64. )/4096;
-	float temp = 88.75 - 607.3 * ( bg_temp_V - bg_output_V);
-	cout << "[Timepix3] Temperature is " << temp << " C" << endl;
-	bore.SetTag( "Temperature", temp );
-
+    int bg_temp_adc, bg_output_adc;
+    if( !spidrctrl->setSenseDac( device_nr, TPX3_BANDGAP_TEMP ) ) error_out( "###setSenseDac" );
+    if( !spidrctrl->getAdc( &bg_temp_adc, 64 ) ) error_out( "###getAdc" );   	
+    float bg_temp_V = 1.5*( bg_temp_adc/64. )/4096;
+    if( !spidrctrl->setSenseDac( device_nr, TPX3_BANDGAP_OUTPUT ) ) error_out( "###setSenseDac" );
+    if( !spidrctrl->getAdc( &bg_output_adc, 64 ) ) error_out( "###getAdc" );   	
+    float bg_output_V = 1.5*( bg_output_adc/64. )/4096;
+    m_temp = 88.75 - 607.3 * ( bg_temp_V - bg_output_V);
+    cout << "[Timepix3] Temperature is " << m_temp << " C" << endl;
+    bore.SetTag( "Temperature", m_temp );
+    
     // Send the event to the Data Collector
     SendEvent(bore);
     
@@ -473,7 +473,20 @@ class Timepix3Producer : public eudaq::Producer {
 	// Then restart the loop
 	continue;
       }
-
+      
+      // Log some info
+      if( m_ev % 10000 == 0 ) {
+	if( m_use_k2450 == 1 ) {
+	  k2450->SetMeasureCurrent();
+	  double I = k2450->ReadValue() * 1e9;
+	  k2450->SetMeasureVoltage();
+	  double V = k2450->ReadVoltage();
+	  char kmsg[1024];
+	  sprintf( kmsg, "Bias Voltage is %f V, Current is %f nA", V, I );
+	  SetStatus( eudaq::Status::LVL_INFO, kmsg );  
+	}  
+      } 
+      
       // Create SpidrDaq for later (best place to do it?)
       spidrdaq = new SpidrDaq( spidrctrl );
 
@@ -747,6 +760,7 @@ private:
   int m_doBiasScan, m_VstepCount, m_VbiasStep;
   int m_xml_VTHRESH;
   int m_do_threshold_scan, m_threshold_start, m_threshold_step, m_threshold_max, m_threshold_return, m_threshold_count;
+  float m_temp;
 };
 
 
