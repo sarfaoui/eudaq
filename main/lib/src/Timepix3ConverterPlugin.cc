@@ -1,21 +1,40 @@
-#include "eudaq/DataConverterPlugin.hh"
-#include "eudaq/StandardEvent.hh"
-#include "eudaq/Utils.hh"
+ #include "eudaq/DataConverterPlugin.hh"
+ #include "eudaq/StandardEvent.hh"
+ #include "eudaq/PluginManager.hh"
+ #include "eudaq/Utils.hh"
+ #include <stdio.h>
+ #include <string.h>
+ #include <vector>
+ // All LCIO-specific parts are put in conditional compilation blocks
+ // so that the other parts may still be used if LCIO is not available.
+ #if USE_LCIO
+ #  include "IMPL/LCEventImpl.h"
+ #  include "IMPL/TrackerRawDataImpl.h"
+ #  include "IMPL/TrackerDataImpl.h"
+ #  include "IMPL/LCCollectionVec.h"
+ #  include "UTIL/CellIDEncoder.h"
+ #  include "lcio.h"
+ #endif
 
-// All LCIO-specific parts are put in conditional compilation blocks
-// so that the other parts may still be used if LCIO is not available.
-#if USE_LCIO
-#  include "IMPL/LCEventImpl.h"
-#  include "IMPL/TrackerRawDataImpl.h"
-#  include "IMPL/LCCollectionVec.h"
-#  include "lcio.h"
-#endif
+ #if USE_EUTELESCOPE
+ #  include "EUTELESCOPE.h"
+ #  include "EUTelRunHeaderImpl.h"
+ #  include "EUTelTimepix3Detector.h"
+ #  include "EUTelSetupDescription.h"
+ #  include "EUTelEventImpl.h"
+ #  include "EUTelTrackerDataInterfacerImpl.h"
+ #  include "EUTelGenericSparsePixel.h"
+ using eutelescope::EUTELESCOPE;
+ #endif
+ #define MATRIX_SIZE 65536
+
+ using namespace std;
 
 namespace eudaq {
 
   // The event type for which this converter plugin will be registered
   // Modify this to match your actual event type (from the Producer)
-  static const char* EVENT_TYPE = "Timepix3Raw";
+	static const char* EVENT_TYPE = "Timepix3Raw";
   
   // Declare a new class that inherits from DataConverterPlugin
   class Timepix3ConverterPlugin : public DataConverterPlugin {
@@ -136,10 +155,158 @@ namespace eudaq {
       return ts;
     }
     
-#if USE_LCIO
-    // This is where the conversion to LCIO is done
-    virtual lcio::LCEvent * GetLCIOEvent(const Event * /*ev*/) const {
-      return 0;
+#if USE_LCIO && USE_EUTELESCOPE
+
+    void ConvertLCIOHeader(lcio::LCRunHeader & header, eudaq::Event const & /*bore*/, eudaq::Configuration const & /*conf*/) const {
+      eutelescope::EUTelRunHeaderImpl runHeader(&header);
+    }
+
+    bool ConvertLCIO(lcio::LCEvent & result, const Event & source) const {
+      //Unused variable:
+      //TrackerRawDataImpl *rawMatrix;
+      TrackerDataImpl *zsFrame;
+
+
+      cout << "Test!!!!!!" << endl;
+
+      if (source.IsBORE()) {
+	// shouldn't happen
+	return true;
+      } else if (source.IsEORE()) {
+	// nothing to do
+	return true;
+      }
+      // If we get here it must be a data event
+
+      // prepare the collections for the rawdata and the zs ones
+      //auto_ptr< lcio::LCCollectionVec > rawDataCollection ( new lcio::LCCollectionVec (lcio::LCIO::TRACKERRAWDATA) ) ;
+      auto_ptr< lcio::LCCollectionVec > zsDataCollection ( new lcio::LCCollectionVec (lcio::LCIO::TRACKERDATA) ) ;
+
+      // set the proper cell encoder
+      //CellIDEncoder< TrackerRawDataImpl > rawDataEncoder ( eutelescope::EUTELESCOPE::MATRIXDEFAULTENCODING, rawDataCollection.get() );
+      CellIDEncoder< TrackerDataImpl > zsDataEncoder ( eutelescope::EUTELESCOPE::ZSDATADEFAULTENCODING, zsDataCollection.get() );
+
+      // a description of the setup
+      std::vector< eutelescope::EUTelSetupDescription * >  setupDescription;
+      // FIXME hardcoded number of planes
+      size_t numplanes = 1;
+      std::string  mode;
+
+      for (size_t iPlane = 0; iPlane < numplanes; ++iPlane) {
+
+          std::string sensortype = "timepix3";
+
+          // Unpack data
+          const RawDataEvent * rev = dynamic_cast<const RawDataEvent *> ( &source );
+          std::cout << "[Number of blocks] " << rev->NumBlocks() << std::endl;
+          std::vector<unsigned char> data = rev->GetBlock( 1 ); // block 1 is pixel data
+          std::cout << "vector has size : " << data.size() << std::endl;
+
+          // Create a StandardPlane representing one sensor plane
+          int id = 6+iPlane;
+          StandardPlane plane(id, EVENT_TYPE, sensortype);
+
+          // Size of one pixel data chunk: 12 bytes = 1+1+2+8 bytes for x,y,tot,ts
+          int width = 256, height = 256;
+          const unsigned int PIX_SIZE = 12;
+
+       	  eutelescope::EUTelPixelDetector * currentDetector = 0x0;
+
+
+
+          plane.SetSizeZS( width, height, ( data.size() ) / PIX_SIZE );
+
+          std::vector<unsigned char> ZSDataX;
+          std::vector<unsigned char> ZSDataY;
+          std::vector<unsigned short> ZSDataTOT;
+          std::vector<uint64_t> ZSDataTS;
+          size_t offset = 0;
+          unsigned char aWord = 0;
+
+		 for( unsigned int i = 0; i < ( data.size() ) / PIX_SIZE; i++ ) {
+
+			ZSDataX   .push_back( unpackXorY( data, offset + sizeof( aWord ) * 0 ) );
+			ZSDataY   .push_back( unpackXorY( data, offset + sizeof( aWord ) * 1 ) );
+			ZSDataTOT .push_back( unpackTOT(  data, offset + sizeof( aWord ) * 2 ) );
+			ZSDataTS  .push_back( unpackTS(   data, offset + sizeof( aWord ) * 4 ) );
+
+			offset += sizeof( aWord ) * PIX_SIZE;
+
+			std::cout << "[DATA] "  << " " << (int)ZSDataX[i] << " " << (int)ZSDataY[i] << " " << ZSDataTOT[i] << " " << ZSDataTS[i] << std::endl;
+		 }
+
+	// plane.SetSizeRaw(width, height);
+	// Set the trigger ID
+		plane.SetTLUEvent(GetTriggerID(source));
+
+		// Add the plane to the StandardEvent
+		for(size_t i = 0 ; i<ZSDataX.size();i++){
+
+		  plane.PushPixel(ZSDataX[i],ZSDataY[i],ZSDataTOT[i]);
+
+		};
+
+
+		/*---------------ZERO SUPP ---------------*/
+
+		//printf("prepare a new TrackerData for the ZS data \n");
+		// prepare a new TrackerData for the ZS data
+
+	 	mode = "ZS";
+	 	currentDetector = new eutelescope::EUTelTimepix3Detector;
+		zsFrame= new TrackerDataImpl;
+		currentDetector->setMode( mode );
+		zsDataEncoder["sensorID"] = plane.ID();
+		zsDataEncoder["sparsePixelType"] = eutelescope::kEUTelGenericSparsePixel;
+		zsDataEncoder.setCellID( zsFrame );
+
+		size_t nPixel = plane.HitPixels();
+		//printf("EvSize=%d %d \n",EvSize,nPixel);
+		for (unsigned i = 0; i < nPixel; i++) {
+		  //printf("EvSize=%d iPixel =%d DATA=%d  icol=%d irow=%d  \n",nPixel,i, (signed short) plane.GetPixel(i, 0), (signed short)plane.GetX(i) ,(signed short)plane.GetY(i));
+
+		  zsFrame->chargeValues().push_back(plane.GetX(i));
+		  zsFrame->chargeValues().push_back(plane.GetY(i));
+		  zsFrame->chargeValues().push_back(plane.GetPixel(i, 0));
+		}
+
+		zsDataCollection->push_back( zsFrame);
+
+		if (  zsDataCollection->size() != 0 ) {
+		  result.addCollection( zsDataCollection.release(), "zsdata_timepix3" );
+		}
+      } //end of plane loop
+
+
+     if ( result.getEventNumber() == 0 ) {
+
+            // do this only in the first event
+
+            LCCollectionVec * timepixSetupCollection = NULL;
+            bool timepixSetupExists = false;
+            try {
+              timepixSetupCollection = static_cast< LCCollectionVec* > ( result.getCollection( "timepix3Setup" ) ) ;
+              timepixSetupExists = true;
+            } catch (...) {
+              timepixSetupCollection = new LCCollectionVec( lcio::LCIO::LCGENERICOBJECT );
+            }
+
+            for ( size_t iPlane = 0 ; iPlane < setupDescription.size() ; ++iPlane ) {
+
+              timepixSetupCollection->push_back( setupDescription.at( iPlane ) );
+
+            }
+
+            if (!timepixSetupExists) {
+
+              result.addCollection( timepixSetupCollection, "timepix3Setup" );
+
+            }
+          }
+
+          return true;
+
+
     }
 #endif
     
