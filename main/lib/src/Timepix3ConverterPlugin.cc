@@ -91,13 +91,16 @@ namespace eudaq {
       std::cout << "vector has size : " << data.size() << std::endl;
 
       // Create a StandardPlane representing one sensor plane
-      int id = 0;
+      int id = 6;
       StandardPlane plane(id, EVENT_TYPE, sensortype);
       
       // Size of one pixel data chunk: 12 bytes = 1+1+2+8 bytes for x,y,tot,ts
       const unsigned int PIX_SIZE = 12;
       
       // Set the number of pixels
+
+
+
       int width = 256, height = 256;
       plane.SetSizeZS( width, height, ( data.size() ) / PIX_SIZE );
       
