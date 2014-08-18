@@ -164,13 +164,12 @@ namespace eudaq {
       eutelescope::EUTelRunHeaderImpl runHeader(&header);
     }
 
-    bool ConvertLCIO(lcio::LCEvent & result, const Event & source) const {
+    bool GetLCIOSubEvent(lcio::LCEvent & result, const Event & source) const {
       //Unused variable:
       //TrackerRawDataImpl *rawMatrix;
       TrackerDataImpl *zsFrame;
 
 
-      cout << "Test!!!!!!" << endl;
 
       if (source.IsBORE()) {
 	// shouldn't happen
@@ -201,13 +200,13 @@ namespace eudaq {
 
           // Unpack data
           const RawDataEvent * rev = dynamic_cast<const RawDataEvent *> ( &source );
-          std::cout << "[Number of blocks] " << rev->NumBlocks() << std::endl;
+          //std::cout << "[Number of blocks] " << rev->NumBlocks() << std::endl;
           std::vector<unsigned char> data = rev->GetBlock( 1 ); // block 1 is pixel data
-          std::cout << "vector has size : " << data.size() << std::endl;
-
+          //std::cout << "vector has size : " << data.size() << std::endl;
           // Create a StandardPlane representing one sensor plane
           int id = 6+iPlane;
           StandardPlane plane(id, EVENT_TYPE, sensortype);
+          plane.SetFlags(StandardPlane::FLAGS::FLAG_ACCUMULATE);
 
           // Size of one pixel data chunk: 12 bytes = 1+1+2+8 bytes for x,y,tot,ts
           int width = 256, height = 256;
@@ -235,7 +234,7 @@ namespace eudaq {
 
 			offset += sizeof( aWord ) * PIX_SIZE;
 
-			std::cout << "[DATA] "  << " " << (int)ZSDataX[i] << " " << (int)ZSDataY[i] << " " << ZSDataTOT[i] << " " << ZSDataTS[i] << std::endl;
+			//std::cout << "[DATA] "  << " " << (int)ZSDataX[i] << " " << (int)ZSDataY[i] << " " << ZSDataTOT[i] << " " << ZSDataTS[i] << std::endl;
 		 }
 
 	// plane.SetSizeRaw(width, height);
@@ -243,11 +242,16 @@ namespace eudaq {
 		plane.SetTLUEvent(GetTriggerID(source));
 
 		// Add the plane to the StandardEvent
+
+		//cout << "ZSDataX size" << ZSDataX.size() << endl;
+
 		for(size_t i = 0 ; i<ZSDataX.size();i++){
 
-		  plane.PushPixel(ZSDataX[i],ZSDataY[i],ZSDataTOT[i]);
+		  plane.SetPixel(i,ZSDataX[i],ZSDataY[i],ZSDataTOT[i]);
 
 		};
+
+		//cout << "plane size" << plane.HitPixels() << endl;
 
 
 		/*---------------ZERO SUPP ---------------*/
@@ -268,9 +272,18 @@ namespace eudaq {
 		for (unsigned i = 0; i < nPixel; i++) {
 		  //printf("EvSize=%d iPixel =%d DATA=%d  icol=%d irow=%d  \n",nPixel,i, (signed short) plane.GetPixel(i, 0), (signed short)plane.GetX(i) ,(signed short)plane.GetY(i));
 
-		  zsFrame->chargeValues().push_back(plane.GetX(i));
-		  zsFrame->chargeValues().push_back(plane.GetY(i));
-		  zsFrame->chargeValues().push_back(plane.GetPixel(i, 0));
+//		  if(rev->GetEventNumber()!=0){
+//		  if((plane.GetX(i)==0) && (plane.GetY(i)==0) ) {
+//
+//			  zsFrame->chargeValues().push_back(plane.GetX(i));
+//			  zsFrame->chargeValues().push_back(plane.GetY(i));
+//			  zsFrame->chargeValues().push_back(plane.GetPixel(i, 0));
+//
+//			  //cout << "[zero at event " << rev->GetEventNumber() <<" at " << i << "]" << "X " << plane.GetX(i) << " Y:" << plane.GetY(i) << " TOT: "<< plane.GetPixel(i, 0)  << endl;
+//
+//		  }}
+
+
 		}
 
 		zsDataCollection->push_back( zsFrame);
