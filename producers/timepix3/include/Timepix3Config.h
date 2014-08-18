@@ -45,6 +45,8 @@ public:
     
   void unpackGeneralConfig( int config );
 
+  string getChipID( int deviceID );
+
 private:
   
   const char* m_time;
@@ -89,3 +91,21 @@ inline vector<TString> tokenise( TString line, const char* delim=" " ) {
   return retvec;
 }
 
+template <typename T>
+inline void pack (std::vector< unsigned char >& dst, T& data) {
+  unsigned char * src = static_cast < unsigned char* >(static_cast < void * >(&data));
+  dst.insert (dst.end (), src, src + sizeof (T));
+}
+
+template <typename T>
+inline void unpack (vector <unsigned char >& src, int index, T& data) {
+  copy (&src[index], &src[index + sizeof (T)], &data);
+}
+
+inline void my_handler( int s ) {
+  
+  cout << "\nCaught signal " << s << endl;
+  cout << "Terminating Timepix3Producer" << endl;
+  exit( 1 );
+  
+}

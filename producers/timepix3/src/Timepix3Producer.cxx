@@ -4,12 +4,13 @@
 #include "eudaq/Timer.hh"
 #include "eudaq/Utils.hh"
 #include "eudaq/OptionParser.hh"
-#include "eudaq/ExampleHardware.hh"
+
 #include <iostream>
 #include <ostream>
 #include <vector>
 #include <unistd.h>
 #include <iomanip>
+#include <signal.h>
 
 #include "Timepix3Config.h"
 
@@ -18,11 +19,29 @@
 
 #define error_out(str) cout<<str<<": "<<spidrctrl->errorString()<<endl
 
+//#define TPX3_VERBOSE
+//#define TPX3_STORE_TXT
+
 using namespace std;
  
+// Structure to store pixel info
+struct PIXEL
+{
+  unsigned char x, y;
+  unsigned short tot;
+  uint64_t ts;
+};
+
+// Structure to store trigger info
+struct TRIGGER
+{
+  unsigned short int_nr, tlu_nr;
+  uint64_t ts;
+};
+
 // A name to identify the raw data format of the events generated
 // Modify this to something appropriate for your producer.
-static const std::string EVENT_TYPE = "Timepix3";
+static const std::string EVENT_TYPE = "Timepix3Raw";
 
 // Declare a new class that inherits from eudaq::Producer
 class Timepix3Producer : public eudaq::Producer {
@@ -36,7 +55,7 @@ class Timepix3Producer : public eudaq::Producer {
   // and the runcontrol connection string, and initialize any member variables.
   Timepix3Producer(const std::string & name, const std::string & runcontrol)
     : eudaq::Producer(name, runcontrol),
-      m_run(0), m_ev(0), stopping(false), done(false),started(0) {
+      m_run(0), m_ev(0), stopping(false), done(false), started(0) {
 
     myTimepix3Config = new Timepix3Config();
 
@@ -59,7 +78,7 @@ class Timepix3Producer : public eudaq::Producer {
     cout << "Configuration file created on: " << myTimepix3Config->getTime() << endl;
 
     // SPIDR-TPX3 IP & PORT
-    m_spidrIP  = config.Get( "SPIDR_IP", "192.168.100.1" );
+    m_spidrIP  = config.Get( "SPIDR_IP", "192.168.100.10" );
     int ip[4];
     vector<TString> ipstr = tokenise( m_spidrIP, ".");
     for (int i = 0; i < ipstr.size(); i++ ) ip[i] = ipstr[i].Atoi();
@@ -70,6 +89,9 @@ class Timepix3Producer : public eudaq::Producer {
     // Open a control connection to SPIDR-TPX3 module
     // with address 192.168.100.10, default port number 50000
     spidrctrl = new SpidrController( ip[0], ip[1], ip[2], ip[3], m_spidrPort );
+
+    // Reset Device
+    if( !spidrctrl->reinitDevice( device_nr ) ) error_out( "###reinitDevice" );
 
     // Are we connected to the SPIDR-TPX3 module?
     if( !spidrctrl->isConnected() ) {
@@ -94,9 +116,11 @@ class Timepix3Producer : public eudaq::Producer {
     if( !spidrctrl->resetPixels( device_nr ) ) error_out( "###resetPixels" );
     
     // Device ID
-    //int device_id = -1;
-    //if( !spidrctrl->getDeviceId( device_nr, &device_id ) ) error_out( "###getDeviceId" );
+    int device_id = -1;
+    if( !spidrctrl->getDeviceId( device_nr, &device_id ) ) error_out( "###getDeviceId" );
     //cout << "Device ID: " << device_id << endl;
+    m_chipID = myTimepix3Config->getChipID( device_id );
+    cout << "[Timepix3] Chip ID: " << m_chipID << endl;
 
     // Get DACs from XML config
     map< string, int > xml_dacs = myTimepix3Config->getDeviceDACs();
@@ -137,77 +161,161 @@ class Timepix3Producer : public eudaq::Producer {
       
       } else if( name == "GeneralConfig" ) {
 	if ( !spidrctrl->setGenConfig( device_nr, val ) ) {
-	  cout << "Error, could not set General Config to " << val << endl;
+	  error_out( "###setGenConfig" );
 	} else {
 	  int config = -1;
+     
 	  spidrctrl->getGenConfig( device_nr, &config );
 	  cout << "Successfully set General Config to " << config << endl;
-	  // Unpack general config
+	  // Unpack general config for human readable output
 	  myTimepix3Config->unpackGeneralConfig( config );
 	}
+
+      } else if( name == "PllConfig" ) {
+	if ( !spidrctrl->setPllConfig( device_nr, val ) ) {
+	  error_out( "###setPllConfig" );
+	} else {
+	  int config = -1;
+	  spidrctrl->getPllConfig( device_nr, &config );
+	  cout << "Successfully set PLL Config to " << config << endl;
+	}
+
+      } else if( name == "OutputBlockConfig" ) {
+	if ( !spidrctrl->setOutBlockConfig( device_nr, val ) ) {
+	  error_out( "###setOutBlockConfig" );
+	} else {
+	  int config = -1;
+	  spidrctrl->getOutBlockConfig( device_nr, &config );
+	  cout << "Successfully set Output Block Config to " << config << endl;
+	}
       }
+
     }
     
-    // Guess what this does?
+    // Reset entire matrix config to zeroes
     spidrctrl->resetPixelConfig();
 
-    // Set per-pixel thresholds from XML
+    // Get per-pixel thresholds from XML
     bool pixfail = false;
     vector< vector< int > > matrix_thresholds = myTimepix3Config->getMatrixDACs();
     for( int x = 0; x < NPIXX; x++ ) {
       for ( int y = 0; y < NPIXY; y++ ) {
-	int threshold = matrix_thresholds[x][y];
+	int threshold = matrix_thresholds[y][x]; // x & y are inverted when parsed from XML
+	// cout << x << " "<< y << " " << threshold << endl;
 	if( !spidrctrl->setPixelThreshold( x, y, threshold ) ) pixfail = true;
       }
     }
     if( !pixfail ) {
-      cout << "Successfully set pixel thresholds." << endl;
+      cout << "Successfully built pixel thresholds." << endl;
     } else {
-      cout << "Something went wrong setting pixel thresholds." << endl;
+      cout << "Something went wrong building pixel thresholds." << endl;
     }
 
-    // Set pixel mask from XML
+    // Get pixel mask from XML
     bool maskfail = false;
     vector< vector< bool > > matrix_mask = myTimepix3Config->getMatrixMask();
     for( int x = 0; x < NPIXX; x++ ) {
       for ( int y = 0; y < NPIXY; y++ ) {
-	bool mask = matrix_mask[x][y];
+	bool mask = matrix_mask[y][x]; // x & y are inverted when parsed from XML
 	if( !spidrctrl->setPixelMask( x, y, mask ) ) maskfail = true;
       }
     }
-    if( !maskfail ) {
-      cout << "Successfully set pixel mask." << endl;
-    } else {
-      cout << "Something went wrong setting pixel mask." << endl;
+    // Add pixels masked by the user in the conf
+    string user_mask = config.Get( "User_Mask", "" );
+    vector<TString> pairs = tokenise( user_mask, ":");
+    for( int k = 0; k < pairs.size(); ++k ) {
+      vector<TString> pair = tokenise( pairs[k], "," );
+      int x = pair[0].Atoi();
+      int y = pair[1].Atoi();
+      cout << "Additinal user mask: " << x << "," << y << endl;
+      if( !spidrctrl->setPixelMask( x, y, true ) ) maskfail = true;
     }
+    if( !maskfail ) {
+      cout << "Successfully built pixel mask." << endl;
+    } else {
+      cout << "Something went wrong building pixel mask." << endl;
+    }
+
+    // Enable test-pulses for some pixels
+    // spidrctrl->setCtprBit( 16 );
+    // spidrctrl->setCtprBit( 86 );
+    // spidrctrl->setCtprBit( 26 );
+    // spidrctrl->setCtprBit( 96 );
+    // if( !spidrctrl->setCtpr( device_nr ) ) error_out( "###setCtpr" );
+    // spidrctrl->setPixelTestEna( 16, 16, true );
+    // spidrctrl->setPixelTestEna( 16, 216, true );
+    // spidrctrl->setPixelTestEna( 16, 26, true );
+    // spidrctrl->setPixelTestEna( 16, 146, true );
+    // spidrctrl->setPixelTestEna( 26, 36, true );
+    // spidrctrl->setPixelTestEna( 26, 136, true );
+    // spidrctrl->setPixelTestEna( 26, 46, true );
+    // spidrctrl->setPixelTestEna( 26, 126, true );
+    // spidrctrl->setPixelTestEna( 86, 16, true );
+    // spidrctrl->setPixelTestEna( 86, 216, true );
+    // spidrctrl->setPixelTestEna( 86, 26, true );
+    // spidrctrl->setPixelTestEna( 86, 146, true );
+    // spidrctrl->setPixelTestEna( 96, 36, true );
+    // spidrctrl->setPixelTestEna( 96, 136, true );
+    // spidrctrl->setPixelTestEna( 96, 46, true );
+    // spidrctrl->setPixelTestEna( 96, 126, true );
 
     // Actually set the pixel thresholds and mask
     if( !spidrctrl->setPixelConfig( device_nr ) ) {
-      cout << "Sucessfully set pixel configuration." << endl;
+      error_out( "###setPixelConfig" );
     } else {
-      cout << "Something went wrong setting pixel configuration." << endl;
+      cout << "Successfully set pixel configuration." << endl;
+    }
+    unsigned char *pixconf = spidrctrl->pixelConfig();
+    int x, y, cnt = 0;
+    if( spidrctrl->getPixelConfig( device_nr ) ) {
+      for( y = 0; y < NPIXY; ++y ) {
+	for( x = 0; x < NPIXX; ++x ) {
+	  std::bitset<6> bitconf( (unsigned int) pixconf[y*256+x] );
+	  //if( pixconf[y*256+x] != 0 ) {
+	  if ( bitconf.test(0) ) { /* masked? */
+	    //cout << x << ',' << y << ": " << bitconf << endl; // hex << setw(2) << setfill('0') << (unsigned int) pixconf[y*256+x] << dec << endl;
+	    ++cnt;
+	  }
+	}
+      }
+      cout << "Pixels masked = " << cnt << endl;
+    } else {
+      cout << "###getPixelConfig: " << spidrctrl->errorString() << endl;
     }
     
     // Keithley stuff
-    // cout << endl;
-    // int gpib_num = config.Get( "Keithley_GPIB", 18 );
-    // k2450 = new Keithley2450( gpib_num );
-    // double v_bias = config.Get( "V_Bias", 0. );
-    // double i_lim = config.Get( "I_Limit", 1e-6 );
-    // k2450->OutputOff();
-    // sleep(1);
-    // k2450->SetMeasureCurrent();
-    // sleep(1);
-    // k2450->SetSourceVoltage4W();
-    // sleep(1);
-    // k2450->SetOutputVoltage( v_bias );
-    // sleep(1);
-    // k2450->SetOutputVoltageCurrentLimit( i_lim );
-    // sleep(1);
-    // k2450->OutputOn();
-    
+    m_use_k2450   = config.Get( "USE_Keithley", 0 );
+    m_gpib_num    = config.Get( "Keithley_GPIB", 18 );
+    m_Vbias       = config.Get( "V_Bias", 0 );
+    m_Ilim        = config.Get( "I_Limit", 1e-6 );
+    m_doBiasScan  = config.Get( "Do_Bias_Scan", 0 );
+    m_Vstart      = config.Get( "V_start", 0 );
+    m_VbiasStep   = config.Get( "V_step", 0 );
+    m_VbiasMax    = config.Get( "V_max", 0 );
+    m_Vreturn     = config.Get( "V_return", 0 );
+    if( m_use_k2450 == 1 ) {
+      cout << endl;
+      k2450 = new Keithley2450( m_gpib_num );
+      //k2450->OutputOff();
+      //sleep(1);
+      //k2450->SetMeasureCurrent();
+      k2450->SetMeasureVoltage();
+      sleep(1);
+      k2450->SetSourceVoltage4W();
+      sleep(1);
+      k2450->SetOutputVoltageCurrentLimit( m_Ilim );
+      sleep(1);
+      k2450->OutputOn();
+    }
+    m_VstepCount = 0;
+
     // At the end, set the status that will be displayed in the Run Control.
     SetStatus(eudaq::Status::LVL_OK, "Configured (" + config.Name() + ")");
+
+    // Also display something for us
+    cout << endl;
+    cout << "Timepix3 Producer configured. Ready to start run. " << endl;
+    cout << endl;
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -222,11 +330,48 @@ class Timepix3Producer : public eudaq::Producer {
     
     std::cout << "Start Run: " << m_run << std::endl;
     
+    // Bias scan
+    double newBiasVoltage = m_Vstart + m_VstepCount*m_VbiasStep;
+    if( m_use_k2450 == 1 ) {
+      if( m_doBiasScan == 1 ) {
+	if ( newBiasVoltage <= m_VbiasMax ) {
+	  k2450->SetOutputVoltage( newBiasVoltage ); 
+	  m_VstepCount++;
+	} else {
+	  k2450->SetOutputVoltage( m_Vreturn ); 
+	  newBiasVoltage = m_Vreturn;
+	}
+      } else {
+	k2450->SetOutputVoltage( m_Vbias ); 
+	newBiasVoltage = m_Vbias;
+      }
+    }
+
     // It must send a BORE to the Data Collector
     eudaq::RawDataEvent bore(eudaq::RawDataEvent::BORE(EVENT_TYPE, m_run));
     // You can set tags on the BORE that will be saved in the data file
     // and can be used later to help decoding
-    bore.SetTag("EXAMPLE", eudaq::to_string(m_exampleparam));
+
+    // TPX3 SpidrMan XML config
+    bore.SetTag( "XMLConfig", eudaq::to_string( m_xmlfileName ) );
+
+    // Put measured bias voltage in BORE
+    if ( m_use_k2450 == 1 ) {
+      sleep(2); // wait for ramp up
+      double actualBiasVoltage = k2450->ReadVoltage();
+      bore.SetTag( "VBiasActual", actualBiasVoltage );
+      bore.SetTag( "VBiasSet", newBiasVoltage );
+    }
+    
+    // Chip ID
+    bore.SetTag( "ChipID", m_chipID );
+
+    // Read band gap temperature, whatever that is
+    //int temp = -1;
+    //if( !spidrctrl->setSenseDac( device_nr, 29 ) ) error_out( "###setSenseDac" );
+    //if( !spidrctrl->getDac( device_nr, 29, &temp ) ) error_out( "###getDac" );
+    //cout << "[Timepix3] Temperature voltage = " << temp << " V?" << endl;
+
     // Send the event to the Data Collector
     SendEvent(bore);
     
@@ -242,18 +387,18 @@ class Timepix3Producer : public eudaq::Producer {
   // This gets called whenever a run is stopped
   virtual void OnStopRun() {
     std::cout << "Stopping Run" << std::endl;
-    started=false;
+    started = false;
     // Set a flag to signal to the polling loop that the run is over
     stopping = true;
     
     // wait until all events have been read out from the hardware
-    while (stopping) {
-      eudaq::mSleep(20);
+    while( stopping ) {
+      eudaq::mSleep( 20 );
     }
     
     // Send an EORE after all the real events have been sent
     // You can also set tags on it (as with the BORE) if necessary
-    SendEvent(eudaq::RawDataEvent::EORE("Test", m_run, ++m_ev));
+    SendEvent(eudaq::RawDataEvent::EORE(EVENT_TYPE, m_run, ++m_ev));
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -274,43 +419,276 @@ class Timepix3Producer : public eudaq::Producer {
   // This is just an example, adapt it to your hardware
   void ReadoutLoop() {
     // Loop until Run Control tells us to terminate
-    while (!done) {
-      if (!hardware.EventsPending()) {
-	// No events are pending, so check if the run is stopping
-	if (stopping) {
-	  // if so, signal that there are no events left
-	  stopping = false;
-	}
+    while( !done ) {
+      if( stopping ) {
+	cout << "Stopping..." << endl;
+	// if so, signal that there are no events left
+	stopping = false;
+      }
+      // Now sleep for a bit, to prevent chewing up all the CPU
+      //eudaq::mSleep( 20 );
+      // Then restart the loop
+      //continue;
+      if( !started ) {
+	//cout << "Not started." << endl;
 	// Now sleep for a bit, to prevent chewing up all the CPU
-	eudaq::mSleep(20);
+	eudaq::mSleep( 20 );
 	// Then restart the loop
 	continue;
       }
-      if (!started)
-	{
-	  // Now sleep for a bit, to prevent chewing up all the CPU
-	  eudaq::mSleep(20);
-	  // Then restart the loop
-	  continue;
-	}
-      // If we get here, there must be data to read out
-      // Create a RawDataEvent to contain the event data to be sent
-      eudaq::RawDataEvent ev(EVENT_TYPE, m_run, m_ev);
+
+      // Create SpidrDaq for later (best place to do it?)
+      spidrdaq = new SpidrDaq( spidrctrl );
+
+      // Restart timers to sync Timepix3 and TLU timestamps
+      if( !spidrctrl->restartTimers() ) error_out( "###restartTimers" );
       
-      for (unsigned plane = 0; plane < hardware.NumSensors(); ++plane) {
-	// Read out a block of raw data from the hardware
-	std::vector<unsigned char> buffer = hardware.ReadSensor(plane);
-	// Each data block has an ID that is used for ordering the planes later
-	// If there are multiple sensors, they should be numbered incrementally
-	
-	// Add the block of raw data to the event
-	ev.AddBlock(plane, buffer);
-      }
-      hardware.CompletedEvent();
-      // Send the event to the Data Collector      
-      SendEvent(ev);
-      // Now increment the event number
-      m_ev++;
+      // Set Timepix3 acquisition mode
+      if( !spidrctrl->datadrivenReadout() ) error_out( "###datadrivenReadout" );
+        
+      // Sample pixel data
+      spidrdaq->setSampling( true );
+      spidrdaq->setSampleAll( true );
+
+      // Open shutter
+      if( !spidrctrl->openShutter() ) error_out( "###openShutter" );
+
+      // Enable TLU
+      if( !spidrctrl->tlu_enable( device_nr, 1 ) ) error_out( "###tlu_enable" );
+      
+#ifdef TPX3_STORE_TXT
+      // Some output files for debugging
+      FILE *ft, *fp, *fa, *fd;
+      ft = fopen("trg.txt","w");
+      fp = fopen("pix.txt","w");
+      fa = fopen("all.txt","w");
+      fd = fopen("diff.txt","w");
+#endif
+      
+      // Vectors to contain pixel and trigger structures
+      vector< PIXEL > pixel_vec;
+      pixel_vec.reserve( 10000000 );
+      vector< TRIGGER > trigger_vec;
+      trigger_vec.reserve( 10000000 );
+      int last_trg_timestamp=0;
+      uint64_t unfolded_timestamp=0;
+      uint64_t last_fpga_ts=0;
+      const uint64_t TIMER_EPOCH = 0x40000000;
+      int cnt = 0;      
+      while( !stopping ) {
+
+      	int size;
+      	bool next_sample = true;
+
+      	// Get a sample of pixel data packets, with timeout in ms
+      	const unsigned int BUF_SIZE = 8*1024*1024;
+      	next_sample = spidrdaq->getSample( BUF_SIZE, 1 );
+
+      	if( next_sample ) {
+
+      	  ++cnt;
+      	  size = spidrdaq->sampleSize();
+	  
+#ifdef TPX3_STORE_TXT
+	  fprintf(fa,"#\n");
+#endif
+	  // look inside sample buffer...
+	  while( 1 ) {
+	    
+	    uint64_t data = spidrdaq->nextPacket();
+
+	    // ...until the sample buffer is empty
+	    if( !data ) break;
+
+	    uint64_t header = data & 0xF000000000000000;
+	    	    
+	    // Data-driven or sequential readout pixel data header?
+	    if( header == 0xB000000000000000 || header == 0xA000000000000000 ) {
+	      struct PIXEL pixel;
+
+	      unsigned char x, y, pixdata, ftoa, tot, toa;
+	      uint64_t fpga_ts;
+	      uint64_t pix_ts;
+	      uint64_t dcol, spix, pix;
+	      // doublecolumn * 2
+	      dcol  = (( data & 0x0FE0000000000000 ) >> 52 ); //(16+28+9-1)
+	      // superpixel * 4
+	      spix  = (( data & 0x001F800000000000 ) >> 45 ); //(16+28+3-2)
+	      // pixel
+	      pix   = (( data & 0x0000700000000000) >> 44 ); //(16+28)
+	      pixel.x    = (unsigned char) ( dcol + pix/4 );
+	      pixel.y    = (unsigned char) ( spix + ( pix & 0x3 ) );
+	      // pixel data
+	      pixdata = (int) (( data & 0x00000FFFFFFF0000 ) >> 16 );
+	      pixel.tot  =  ( pixdata >> 4 ) & 0x3FF;
+
+	      // timestamp calculation
+	      ftoa = pixdata & 0xF;
+	      toa  = ( pixdata >> 14 ) & 0x3FFF;
+	      fpga_ts = (int) (data & 0x000000000000FFFF);
+	      pix_ts = ( fpga_ts << 14 ) | toa; 
+	      if( fpga_ts < last_fpga_ts - 1 ) 
+		{
+		  unfolded_timestamp+=TIMER_EPOCH;
+#ifdef TPX3_VERBOSE
+		  cout << "-- unfolding (pix) --\n";
+#endif
+		} else if( fpga_ts == last_fpga_ts - 1 ) 
+		{ 
+		  pix_ts-=TIMER_EPOCH;
+		}
+	      pix_ts += unfolded_timestamp;
+	      pix_ts <<= 4;
+	      pix_ts -= ftoa;
+	      pixel.ts = pix_ts;
+              last_fpga_ts = fpga_ts;
+
+	      // store PIXEL struct in vector
+	      pixel_vec.push_back( pixel );
+	      
+	      // print it
+#ifdef TPX3_VERBOSE
+	      printf("[PIXDATA] (%3d,%3d) TOT:%5d TOA:%5d FPGA_TS:%6d       TS:%15llu\n", x , y , tot, toa , fpga_ts, pix_ts);
+#endif
+#ifdef TPX3_STORE_TXT
+	      fprintf(fp,"%d\n",pix_ts);
+	      fprintf(fa,"p\t%d\n",pix_ts);
+#endif
+	    } else if( header == 0x5000000000000000 ) { // Or TLU packet header?
+	      struct TRIGGER trigger;
+	      uint64_t fpga_ts;
+	      unsigned short int_trg_nr, tlu_trg_nr;
+	      uint64_t trg_timestamp;
+	      //internal trigger number
+	      trigger.int_nr = (data >> 45) & 0x7FFF;
+	      //TLU trigger number
+	      trigger.tlu_nr = (data >> 30) & 0x7FFF;
+
+	      //timestamp
+	      trg_timestamp = data & 0x3FFFFFFF;
+	      fpga_ts = (int) ((trg_timestamp>>14) & 0x000000000000FFFF);
+	      if ( fpga_ts < last_fpga_ts-1 )
+		{
+		  unfolded_timestamp += TIMER_EPOCH;
+#ifdef TPX3_VERBOSE
+		  cout << "-- unfolding (trg) --\n";
+#endif
+		} else if ( fpga_ts == last_fpga_ts - 1 )
+		{
+		  trg_timestamp-=TIMER_EPOCH;
+		}
+	      trg_timestamp += unfolded_timestamp;
+	      trg_timestamp <<= 4;
+	      trigger.ts = trg_timestamp;
+              last_fpga_ts = fpga_ts;
+	      
+#ifdef TPX3_VERBOSE
+	      printf("[TRGDATA] tlu_id:%5d int_id:%5d                          TS:%15llu\n", tlu_trg_nr , int_trg_nr, trg_timestamp);
+#endif
+	      // store TRIGGER struct in vector
+	      trigger_vec.push_back( trigger );
+
+#ifdef TPX3_STORE_TXT
+	      // write in files
+              fprintf(ft,"%d\n",trg_timestamp);
+              fprintf(fa,"t\t%d\n",trg_timestamp);
+#endif
+	    }
+	  } // End loop over sample buffer
+	  
+	  // If sample buffer is empty, look at available  data and try to build events
+	  unsigned int trg_built = 0;
+	  
+	  // Loop over pixel and trigger vectors
+	  while( trigger_vec.size() > 1 ) {
+	    // Current event
+	    eudaq::RawDataEvent ev( EVENT_TYPE, m_run, m_ev );
+	    std::vector<unsigned char> bufferTrg;
+	    std::vector<unsigned char> bufferPix;
+	    
+	    // pack( buffer, trg_id ); !! add trigger number and timestamp here !!
+	    
+	    uint64_t curr_trg_ts = trigger_vec[0].ts;
+	    uint64_t next_trg_ts = trigger_vec[1].ts;
+	    uint64_t max_pixel_ts = ( next_trg_ts + curr_trg_ts ) / 2;
+
+	    uint64_t curr_tlu_nr = trigger_vec[0].tlu_nr;
+	    uint64_t curr_int_nr = trigger_vec[0].int_nr;
+	    
+	    // pack TLU info in its buffer
+	    pack( bufferTrg, curr_trg_ts);
+	    pack( bufferTrg, curr_tlu_nr);
+	    pack( bufferTrg, curr_int_nr);
+
+	    // and add it to the event
+	    ev.AddBlock( 0, bufferTrg );
+
+#ifdef TPX3_VERBOSE
+	    uint64_t fpts=0;
+	    if (pixel_vec.size()>0) fpts=pixel_vec[0].ts;
+	    printf("\n=> processing tr_id %5d  ts: %15llu max_ts: %15llu next_trg_ts: %15llu  (pix vec size: %d, first pix ts: %llu)\n", trigger_vec[0].tlu_nr,curr_trg_ts, max_pixel_ts, next_trg_ts , pixel_vec.size(),fpts);
+
+#endif		
+	    // Loop over pixels 
+	    for( int j = 0; j < pixel_vec.size(); ++j ) {
+	      uint64_t curr_pix_ts = pixel_vec[j].ts;
+	      if( curr_pix_ts < max_pixel_ts ) {
+		
+#ifdef TPX3_STORE_TXT
+		long long diff = (long long)curr_trg_ts - (long long)curr_pix_ts;
+		fprintf(fd,"%lld\n",diff);
+#endif
+#ifdef TPX3_VERBOSE
+		printf("                        +  ts: %15llu diff: %15lld  (pix %3d,%3d)\n", curr_pix_ts, diff, pixel_vec[j].x, pixel_vec[j].y );
+#endif
+		// Pack pixel data into event buffer
+		pack( bufferPix, pixel_vec[j].x );
+		pack( bufferPix, pixel_vec[j].y );
+		pack( bufferPix, pixel_vec[j].tot );
+		pack( bufferPix, pixel_vec[j].ts );
+		
+		pixel_vec.erase( pixel_vec.begin() + j );
+		j--; // after removing one pixel data packet, need to go back one step in the vector to avoid skipping pixels
+	      }
+	      else if( curr_pix_ts > next_trg_ts ) {
+#ifdef TPX3_VERBOSE
+                printf("                        -> break! (%llu > %llu , diff:%llu)\n",curr_pix_ts,next_trg_ts,curr_pix_ts-next_trg_ts  );
+#endif	
+		break;
+	      }
+	    }
+	    
+	    // Remove trigger from vector
+	    trigger_vec.erase( trigger_vec.begin() );
+	    // Add buffer to block
+	    ev.AddBlock( 1, bufferPix );
+	    // Send the event to the Data Collector      
+	    SendEvent(ev);
+	    // Now increment the event number
+	    m_ev++;
+	    trg_built++;
+	  }
+	  float size_proc = size*100.0/BUF_SIZE;
+	  printf( "%c [%10d] Size %7d [%6.2f%%] Triggers %5d  Pixels %6lu       ", 13, cnt, size, size_proc, trg_built, pixel_vec.size() );
+	  fflush( stdout ); 
+	}
+      }      
+
+#ifdef TPX3_STORE_TXT
+      fclose(fp);
+      fclose(ft);
+      fclose(fa);
+      fclose(fd);
+#endif      
+      
+      // Guess what this does?
+      spidrctrl->closeShutter();
+
+      // Disble TLU
+      if( !spidrctrl->tlu_enable( device_nr, 0 ) ) error_out( "###tlu_enable" );
+
+      // Clean up
+      delete spidrdaq;
     }
   }
 
@@ -318,15 +696,18 @@ private:
   // This is just a dummy class representing the hardware
   // It here basically that the example code will compile
   // but it also generates example raw data to help illustrate the decoder
-  eudaq::ExampleHardware hardware;
-  unsigned m_run, m_ev, m_exampleparam;
+  unsigned m_run, m_ev;
   int m_spidrPort;
   int device_nr = 0;
   bool stopping, done,started;
-  string m_spidrIP, m_xmlfileName, m_time;
+  string m_spidrIP, m_xmlfileName, m_time, m_chipID;
   Timepix3Config *myTimepix3Config;
   SpidrController *spidrctrl;
+  SpidrDaq *spidrdaq;
   Keithley2450 *k2450;
+  int m_use_k2450, m_gpib_num;
+  double m_Vbias, m_Ilim, m_Vstart, m_Vreturn, m_VbiasMax;
+  int m_doBiasScan, m_VstepCount, m_VbiasStep;
 };
 
 
@@ -345,6 +726,13 @@ int main(int /*argc*/, const char ** argv) {
   eudaq::Option<std::string> rctrl(op, "r", "runcontrol", "tcp://localhost:44000", "address", "The address of the RunControl.");
   eudaq::Option<std::string> level(op, "l", "log-level",  "NONE",                  "level",   "The minimum level for displaying log messages locally");
   eudaq::Option<std::string> name (op, "n", "name",       "Timepix3",              "string",  "The name of this Producer");
+
+  // Handle CTRL+C interrupt signal (?)
+  struct sigaction sigIntHandler;
+  sigIntHandler.sa_handler = my_handler;
+  sigemptyset(&sigIntHandler.sa_mask);
+  sigIntHandler.sa_flags = 0;
+  sigaction(SIGINT, &sigIntHandler, NULL);
 
   try {
     // This will look through the command-line arguments and set the options
@@ -464,7 +852,7 @@ int main(int /*argc*/, const char ** argv) {
 			       TPX3_POLARITY_HPLUS |
 			       TPX3_ACQMODE_TOA_TOT |
 			       TPX3_GRAYCOUNT_ENA |
-			       TPX3_TESTPULSE_ENA |
+			       TPX3_TESTPULSE_ENA |o
 			       TPX3_FASTLO_ENA |
 			       TPX3_SELECTTP_DIGITAL ) )
     {
