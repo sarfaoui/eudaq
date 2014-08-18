@@ -5,6 +5,9 @@
  #include <stdio.h>
  #include <string.h>
  #include <vector>
+#include <iostream>
+#include <ostream>
+
  // All LCIO-specific parts are put in conditional compilation blocks
  // so that the other parts may still be used if LCIO is not available.
  #if USE_LCIO
@@ -40,7 +43,7 @@ namespace eudaq {
   class Timepix3ConverterPlugin : public DataConverterPlugin {
     
   public:
-    
+    //FILE *totfile;
     // This is called once at the beginning of each run.
     // You may extract information from the BORE and/or configuration
     // and store it in member variables to use during the decoding later.
@@ -50,7 +53,10 @@ namespace eudaq {
 #ifndef WIN32  //some linux Stuff //$$change
       (void)cnf; // just to suppress a warning about unused parameter cnf
 #endif
-      
+     // totfile=fopen("tot.txt","w");
+
+
+
     }
     
     // This should return the trigger ID (as provided by the TLU)
@@ -128,7 +134,7 @@ namespace eudaq {
       plane.SetTLUEvent( GetTriggerID(ev) );
       
       for( size_t i = 0 ; i < ZSDataX.size(); ++i ) {
-	plane.PushPixel( ZSDataX[i], ZSDataY[i], ZSDataTOT[i] );
+	plane.SetPixel(i, ZSDataX[i], ZSDataY[i], ZSDataTOT[i] );
       }
 
       // Add the plane to the StandardEvent
@@ -249,6 +255,8 @@ namespace eudaq {
 
 		  plane.SetPixel(i,ZSDataX[i],ZSDataY[i],ZSDataTOT[i]);
 
+		  //fprintf(totfile,"%i %i %i\n",ZSDataX[i],ZSDataY[i],ZSDataTOT[i]);
+
 		};
 
 		//cout << "plane size" << plane.HitPixels() << endl;
@@ -270,21 +278,17 @@ namespace eudaq {
 		size_t nPixel = plane.HitPixels();
 		//printf("EvSize=%d %d \n",EvSize,nPixel);
 		for (unsigned i = 0; i < nPixel; i++) {
-		  //printf("EvSize=%d iPixel =%d DATA=%d  icol=%d irow=%d  \n",nPixel,i, (signed short) plane.GetPixel(i, 0), (signed short)plane.GetX(i) ,(signed short)plane.GetY(i));
+				zsFrame->chargeValues().push_back(plane.GetX(i));
+				zsFrame->chargeValues().push_back(plane.GetY(i));
+				zsFrame->chargeValues().push_back(plane.GetPixel(i, 0));
 
-//		  if(rev->GetEventNumber()!=0){
-//		  if((plane.GetX(i)==0) && (plane.GetY(i)==0) ) {
-//
-//			  zsFrame->chargeValues().push_back(plane.GetX(i));
-//			  zsFrame->chargeValues().push_back(plane.GetY(i));
-//			  zsFrame->chargeValues().push_back(plane.GetPixel(i, 0));
-//
-//			  //cout << "[zero at event " << rev->GetEventNumber() <<" at " << i << "]" << "X " << plane.GetX(i) << " Y:" << plane.GetY(i) << " TOT: "<< plane.GetPixel(i, 0)  << endl;
-//
-//		  }}
+		//if(plane.GetPixel(i, 0)>15) cout << "FFFFFFFFUUUUUUUUUUUUUUUUUUUUUUUUUUU" << endl;
 
 
 		}
+
+
+
 
 		zsDataCollection->push_back( zsFrame);
 
