@@ -556,7 +556,8 @@ class Timepix3Producer : public eudaq::Producer {
 	    if( header == 0xB000000000000000 || header == 0xA000000000000000 ) {
 	      struct PIXEL pixel;
 
-	      unsigned char x, y, pixdata, ftoa, tot, toa;
+	      unsigned char x, y, ftoa;
+	      uint64_t pixdata, tot, toa;
 	      uint64_t fpga_ts;
 	      uint64_t pix_ts;
 	      uint64_t dcol, spix, pix;
@@ -571,6 +572,8 @@ class Timepix3Producer : public eudaq::Producer {
 	      // pixel data
 	      pixdata = (int) (( data & 0x00000FFFFFFF0000 ) >> 16 );
 	      pixel.tot  =  ( pixdata >> 4 ) & 0x3FF;
+
+	      //printf("x:%03i y:%03i tot:%05i %08x \n",pixel.x,pixel.y,pixel.tot,pixdata);
 
 	      // timestamp calculation
 	      ftoa = pixdata & 0xF;
