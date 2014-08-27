@@ -1,35 +1,37 @@
- #include "eudaq/DataConverterPlugin.hh"
- #include "eudaq/StandardEvent.hh"
- #include "eudaq/PluginManager.hh"
- #include "eudaq/Utils.hh"
- #include <stdio.h>
- #include <string.h>
- #include <vector>
+#include "eudaq/DataConverterPlugin.hh"
+#include "eudaq/StandardEvent.hh"
+#include "eudaq/PluginManager.hh"
+#include "eudaq/Utils.hh"
+#include <stdio.h>
+#include <string.h>
+#include <vector>
 #include <iostream>
 #include <ostream>
 
- // All LCIO-specific parts are put in conditional compilation blocks
- // so that the other parts may still be used if LCIO is not available.
- #if USE_LCIO
- #  include "IMPL/LCEventImpl.h"
- #  include "IMPL/TrackerRawDataImpl.h"
- #  include "IMPL/TrackerDataImpl.h"
- #  include "IMPL/LCCollectionVec.h"
- #  include "UTIL/CellIDEncoder.h"
- #  include "lcio.h"
- #endif
+// All LCIO-specific parts are put in conditional compilation blocks
+// so that the other parts may still be used if LCIO is not available.
+#if USE_LCIO
+#  include "IMPL/LCEventImpl.h"
+#  include "IMPL/TrackerRawDataImpl.h"
+#  include "IMPL/TrackerDataImpl.h"
+#  include "IMPL/LCCollectionVec.h"
+#  include "UTIL/CellIDEncoder.h"
+#  include "lcio.h"
+#endif
 
- #if USE_EUTELESCOPE
- #  include "EUTELESCOPE.h"
- #  include "EUTelRunHeaderImpl.h"
- #  include "EUTelTimepix3Detector.h"
- #  include "EUTelSetupDescription.h"
- #  include "EUTelEventImpl.h"
- #  include "EUTelTrackerDataInterfacerImpl.h"
- #  include "EUTelGenericSparsePixel.h"
- using eutelescope::EUTELESCOPE;
- #endif
- #define MATRIX_SIZE 65536
+#if USE_EUTELESCOPE
+#  include "EUTELESCOPE.h"
+#  include "EUTelRunHeaderImpl.h"
+#  include "EUTelTimepix3Detector.h"
+#  include "EUTelSetupDescription.h"
+#  include "EUTelEventImpl.h"
+#  include "EUTelTrackerDataInterfacerImpl.h"
+#  include "EUTelGenericSparsePixel.h"
+using eutelescope::EUTELESCOPE;
+#endif
+#define MATRIX_SIZE 65536
+
+#define WRITE_TOT
 
  using namespace std;
 
@@ -43,7 +45,9 @@ namespace eudaq {
   class Timepix3ConverterPlugin : public DataConverterPlugin {
     
   public:
-    //FILE *totfile;
+#ifdef WRITE_TOT
+    FILE *totfile;
+#endif
     // This is called once at the beginning of each run.
     // You may extract information from the BORE and/or configuration
     // and store it in member variables to use during the decoding later.
@@ -53,10 +57,9 @@ namespace eudaq {
 #ifndef WIN32  //some linux Stuff //$$change
       (void)cnf; // just to suppress a warning about unused parameter cnf
 #endif
-     // totfile=fopen("tot.txt","w");
-
-
-
+#ifdef WRITE_TOT
+      totfile=fopen("tot.txt","w");
+#endif
     }
     
     // This should return the trigger ID (as provided by the TLU)
@@ -104,9 +107,6 @@ namespace eudaq {
       const unsigned int PIX_SIZE = 12;
       
       // Set the number of pixels
-
-
-
       int width = 256, height = 256;
       plane.SetSizeZS( width, height, ( data.size() ) / PIX_SIZE );
       
@@ -126,7 +126,7 @@ namespace eudaq {
 
 	offset += sizeof( aWord ) * PIX_SIZE; 
 
-	std::cout << "[DATA] "  << " " << (int)ZSDataX[i] << " " << (int)ZSDataY[i] << " " << ZSDataTOT[i] << " " << ZSDataTS[i] << std::endl;
+	//std::cout << "[DATA] "  << " " << (int)ZSDataX[i] << " " << (int)ZSDataY[i] << " " << ZSDataTOT[i] << " " << ZSDataTS[i] << std::endl;
 
       }
 
@@ -175,8 +175,6 @@ namespace eudaq {
       //TrackerRawDataImpl *rawMatrix;
       TrackerDataImpl *zsFrame;
 
-
-
       if (source.IsBORE()) {
 	// shouldn't happen
 	return true;
@@ -220,8 +218,6 @@ namespace eudaq {
 
        	  eutelescope::EUTelPixelDetector * currentDetector = 0x0;
 
-
-
           plane.SetSizeZS( width, height, ( data.size() ) / PIX_SIZE );
 
           std::vector<unsigned char> ZSDataX;
@@ -230,103 +226,99 @@ namespace eudaq {
           std::vector<uint64_t> ZSDataTS;
           size_t offset = 0;
           unsigned char aWord = 0;
+	  
+	  for( unsigned int i = 0; i < ( data.size() ) / PIX_SIZE; i++ ) {
+	    
+	    ZSDataX   .push_back( unpackXorY( data, offset + sizeof( aWord ) * 0 ) );
+	    ZSDataY   .push_back( unpackXorY( data, offset + sizeof( aWord ) * 1 ) );
+	    ZSDataTOT .push_back( unpackTOT(  data, offset + sizeof( aWord ) * 2 ) );
+	    ZSDataTS  .push_back( unpackTS(   data, offset + sizeof( aWord ) * 4 ) );
+	    
+	    offset += sizeof( aWord ) * PIX_SIZE;
+	    
+	    //std::cout << "[DATA] "  << " " << (int)ZSDataX[i] << " " << (int)ZSDataY[i] << " " << ZSDataTOT[i] << " " << ZSDataTS[i] << std::endl;
+	  }
+	  
+	  // plane.SetSizeRaw(width, height);
+	  // Set the trigger ID
+	  plane.SetTLUEvent(GetTriggerID(source));
+	  
+	  // Add the plane to the StandardEvent
+	  
+	  //cout << "ZSDataX size" << ZSDataX.size() << endl;
+	  
+	  for(size_t i = 0 ; i<ZSDataX.size();i++){
+	    
+	    plane.SetPixel(i,ZSDataX[i],ZSDataY[i],ZSDataTOT[i]);
 
-		 for( unsigned int i = 0; i < ( data.size() ) / PIX_SIZE; i++ ) {
-
-			ZSDataX   .push_back( unpackXorY( data, offset + sizeof( aWord ) * 0 ) );
-			ZSDataY   .push_back( unpackXorY( data, offset + sizeof( aWord ) * 1 ) );
-			ZSDataTOT .push_back( unpackTOT(  data, offset + sizeof( aWord ) * 2 ) );
-			ZSDataTS  .push_back( unpackTS(   data, offset + sizeof( aWord ) * 4 ) );
-
-			offset += sizeof( aWord ) * PIX_SIZE;
-
-			//std::cout << "[DATA] "  << " " << (int)ZSDataX[i] << " " << (int)ZSDataY[i] << " " << ZSDataTOT[i] << " " << ZSDataTS[i] << std::endl;
-		 }
-
-	// plane.SetSizeRaw(width, height);
-	// Set the trigger ID
-		plane.SetTLUEvent(GetTriggerID(source));
-
-		// Add the plane to the StandardEvent
-
-		//cout << "ZSDataX size" << ZSDataX.size() << endl;
-
-		for(size_t i = 0 ; i<ZSDataX.size();i++){
-
-		  plane.SetPixel(i,ZSDataX[i],ZSDataY[i],ZSDataTOT[i]);
-
-		  //fprintf(totfile,"%i %i %i\n",ZSDataX[i],ZSDataY[i],ZSDataTOT[i]);
-
-		};
-
-		//cout << "plane size" << plane.HitPixels() << endl;
-
-
-		/*---------------ZERO SUPP ---------------*/
-
-		//printf("prepare a new TrackerData for the ZS data \n");
-		// prepare a new TrackerData for the ZS data
-
-	 	mode = "ZS";
-	 	currentDetector = new eutelescope::EUTelTimepix3Detector;
-		zsFrame= new TrackerDataImpl;
-		currentDetector->setMode( mode );
-		zsDataEncoder["sensorID"] = plane.ID();
-		zsDataEncoder["sparsePixelType"] = eutelescope::kEUTelGenericSparsePixel;
-		zsDataEncoder.setCellID( zsFrame );
-
-		size_t nPixel = plane.HitPixels();
-		//printf("EvSize=%d %d \n",EvSize,nPixel);
-		for (unsigned i = 0; i < nPixel; i++) {
-				zsFrame->chargeValues().push_back(plane.GetX(i));
-				zsFrame->chargeValues().push_back(plane.GetY(i));
-				zsFrame->chargeValues().push_back(plane.GetPixel(i, 0));
-
-		//if(plane.GetPixel(i, 0)>15) cout << "FFFFFFFFUUUUUUUUUUUUUUUUUUUUUUUUUUU" << endl;
-
-
-		}
+#ifdef WRITE_TOT	    
+	    fprintf(totfile,"%i %i %i\n",ZSDataX[i],ZSDataY[i],ZSDataTOT[i]);
+#endif	    
+	  };
+	  
+	  //cout << "plane size" << plane.HitPixels() << endl;
+	  
+	  
+	  /*---------------ZERO SUPP ---------------*/
+	  
+	  //printf("prepare a new TrackerData for the ZS data \n");
+	  // prepare a new TrackerData for the ZS data
+	  
+	  mode = "ZS";
+	  currentDetector = new eutelescope::EUTelTimepix3Detector;
+	  zsFrame= new TrackerDataImpl;
+	  currentDetector->setMode( mode );
+	  zsDataEncoder["sensorID"] = plane.ID();
+	  zsDataEncoder["sparsePixelType"] = eutelescope::kEUTelGenericSparsePixel;
+	  zsDataEncoder.setCellID( zsFrame );
+	  
+	  size_t nPixel = plane.HitPixels();
+	  //printf("EvSize=%d %d \n",EvSize,nPixel);
+	  for (unsigned i = 0; i < nPixel; i++) {
+	    zsFrame->chargeValues().push_back(plane.GetX(i));
+	    zsFrame->chargeValues().push_back(255-plane.GetY(i));
+	    //zsFrame->chargeValues().push_back(plane.GetPixel(i, 0));
+	    zsFrame->chargeValues().push_back(ZSDataTOT[i]);
+	    zsFrame->chargeValues().push_back(ZSDataTS[i]);
 
 
-
-
-		zsDataCollection->push_back( zsFrame);
-
-		if (  zsDataCollection->size() != 0 ) {
-		  result.addCollection( zsDataCollection.release(), "zsdata_timepix3" );
-		}
+	    //if(plane.GetPixel(i, 0)>15) cout << "FFFFFFFFUUUUUUUUUUUUUUUUUUUUUUUUUUU" << endl;
+	    
+	  }
+	  
+	  zsDataCollection->push_back( zsFrame);
+	  
+	  if (  zsDataCollection->size() != 0 ) {
+	    result.addCollection( zsDataCollection.release(), "zsdata_timepix3" );
+	  }
       } //end of plane loop
-
-
-     if ( result.getEventNumber() == 0 ) {
-
-            // do this only in the first event
-
-            LCCollectionVec * timepixSetupCollection = NULL;
-            bool timepixSetupExists = false;
-            try {
-              timepixSetupCollection = static_cast< LCCollectionVec* > ( result.getCollection( "timepix3Setup" ) ) ;
-              timepixSetupExists = true;
-            } catch (...) {
-              timepixSetupCollection = new LCCollectionVec( lcio::LCIO::LCGENERICOBJECT );
-            }
-
-            for ( size_t iPlane = 0 ; iPlane < setupDescription.size() ; ++iPlane ) {
-
-              timepixSetupCollection->push_back( setupDescription.at( iPlane ) );
-
-            }
-
-            if (!timepixSetupExists) {
-
-              result.addCollection( timepixSetupCollection, "timepix3Setup" );
-
-            }
-          }
-
-          return true;
-
-
+      
+      if ( result.getEventNumber() == 0 ) {
+	
+	// do this only in the first event
+	
+	LCCollectionVec * timepixSetupCollection = NULL;
+	bool timepixSetupExists = false;
+	try {
+	  timepixSetupCollection = static_cast< LCCollectionVec* > ( result.getCollection( "timepix3Setup" ) ) ;
+	  timepixSetupExists = true;
+	} catch (...) {
+	  timepixSetupCollection = new LCCollectionVec( lcio::LCIO::LCGENERICOBJECT );
+	}
+	
+	for ( size_t iPlane = 0 ; iPlane < setupDescription.size() ; ++iPlane ) {
+	  
+	  timepixSetupCollection->push_back( setupDescription.at( iPlane ) );
+	  
+	}
+	
+	if (!timepixSetupExists) {
+	  
+	  result.addCollection( timepixSetupCollection, "timepix3Setup" );
+	  
+	}
+      }
+      return true; 
     }
 #endif
     
