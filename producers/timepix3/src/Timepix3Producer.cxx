@@ -32,6 +32,41 @@ struct PIXEL
   uint64_t ts;
 };
 
+
+uint64_t GetTimeus()
+{
+#ifdef WIN32
+ /* Windows */
+ FILETIME ft;
+ LARGE_INTEGER li;
+
+ /* Get the amount of 100 nano seconds intervals elapsed since January 1, 1601 (UTC) and copy it
+  * to a LARGE_INTEGER structure. */
+ GetSystemTimeAsFileTime(&ft);
+ li.LowPart = ft.dwLowDateTime;
+ li.HighPart = ft.dwHighDateTime;
+
+ uint64_t ret = li.QuadPart;
+ ret -= 116444736000000000LL; /* Convert from file time to UNIX epoch time. */
+ ret /= 10000; /* From 100 nano seconds (10^-7) to 1 millisecond (10^-3) intervals */
+
+ return ret;
+#else
+ /* Linux */
+ struct timeval tv;
+
+ gettimeofday(&tv, NULL);
+
+ uint64_t ret = tv.tv_usec;
+
+ /* Adds the seconds (10^0) after converting them to milliseconds (10^-3) */
+ ret += (tv.tv_sec * 1000000);
+
+ return ret;
+#endif
+}
+
+
 // Structure to store trigger info
 struct TRIGGER
 {
@@ -282,6 +317,7 @@ class Timepix3Producer : public eudaq::Producer {
       cout << "Pixels masked = " << cnt << endl;
     } else {
       cout << "###getPixelConfig: " << spidrctrl->errorString() << endl;
+      exit(0);
     }
     
     // Keithley stuff
@@ -317,6 +353,10 @@ class Timepix3Producer : public eudaq::Producer {
 	m_threshold_max     = config.Get( "threshold_max", m_xml_VTHRESH );
 	m_threshold_return  = config.Get( "threshold_return", m_xml_VTHRESH );
 	m_threshold_count   = 0;
+	
+    // Maximum pixel vector size and how many pixels to clean from it (to handle backlog)
+    m_maxPixVec = config.Get( "MaxPixelVecSize", 10000 );
+    m_pixToDel  = config.Get( "NpixelsToDelete", 5000 );
 
     // At the end, set the status that will be displayed in the Run Control.
     SetStatus(eudaq::Status::LVL_OK, "Configured (" + config.Name() + ")");
@@ -331,6 +371,20 @@ class Timepix3Producer : public eudaq::Producer {
   // OnStartRun
   //////////////////////////////////////////////////////////////////////////////////
   
+  double getTpx3Temperature(){
+    // Read band gap temperature, whatever that is
+    int bg_temp_adc, bg_output_adc;
+    if( !spidrctrl->setSenseDac( device_nr, TPX3_BANDGAP_TEMP ) ) error_out( "###setSenseDac" );
+    if( !spidrctrl->getAdc( &bg_temp_adc, 64 ) ) error_out( "###getAdc" );   	
+    float bg_temp_V = 1.5*( bg_temp_adc/64. )/4096;
+    if( !spidrctrl->setSenseDac( device_nr, TPX3_BANDGAP_OUTPUT ) ) error_out( "###setSenseDac" );
+    if( !spidrctrl->getAdc( &bg_output_adc, 64 ) ) error_out( "###getAdc" );   	
+    float bg_output_V = 1.5*( bg_output_adc/64. )/4096;
+    m_temp = 88.75 - 607.3 * ( bg_temp_V - bg_output_V);
+//    cout << "[Timepix3] Temperature is " << m_temp << " C" << endl;
+    return m_temp;
+  }
+
   // This gets called whenever a new run is started
   // It receives the new run number as a parameter
   virtual void OnStartRun(unsigned param) {
@@ -397,17 +451,8 @@ class Timepix3Producer : public eudaq::Producer {
     // Chip ID
     bore.SetTag( "ChipID", m_chipID );
 
-    // Read band gap temperature, whatever that is
-    int bg_temp_adc, bg_output_adc;
-    if( !spidrctrl->setSenseDac( device_nr, TPX3_BANDGAP_TEMP ) ) error_out( "###setSenseDac" );
-    if( !spidrctrl->getAdc( &bg_temp_adc, 64 ) ) error_out( "###getAdc" );   	
-    float bg_temp_V = 1.5*( bg_temp_adc/64. )/4096;
-    if( !spidrctrl->setSenseDac( device_nr, TPX3_BANDGAP_OUTPUT ) ) error_out( "###setSenseDac" );
-    if( !spidrctrl->getAdc( &bg_output_adc, 64 ) ) error_out( "###getAdc" );   	
-    float bg_output_V = 1.5*( bg_output_adc/64. )/4096;
-    m_temp = 88.75 - 607.3 * ( bg_temp_V - bg_output_V);
-    cout << "[Timepix3] Temperature is " << m_temp << " C" << endl;
-    bore.SetTag( "Temperature", m_temp );
+    double temp=getTpx3Temperature();
+    bore.SetTag( "Temperature", temp );
     
     // Send the event to the Data Collector
     SendEvent(bore);
@@ -474,19 +519,8 @@ class Timepix3Producer : public eudaq::Producer {
 	continue;
       }
       
-      // Log some info
-      if( m_ev % 10000 == 0 ) {
-	if( m_use_k2450 == 1 ) {
-	  k2450->SetMeasureCurrent();
-	  double I = k2450->ReadValue() * 1e9;
-	  k2450->SetMeasureVoltage();
-	  double V = k2450->ReadVoltage();
-	  char kmsg[1024];
-	  sprintf( kmsg, "Bias Voltage is %f V, Current is %f nA", V, I );
-	  SetStatus( eudaq::Status::LVL_INFO, kmsg );  
-	}  
-      } 
-      
+
+      unsigned int m_ev_next_update=0;
       // Create SpidrDaq for later (best place to do it?)
       spidrdaq = new SpidrDaq( spidrctrl );
 
@@ -504,13 +538,14 @@ class Timepix3Producer : public eudaq::Producer {
       if( !spidrctrl->openShutter() ) error_out( "###openShutter" );
 
       // Enable TLU
-      if( !spidrctrl->tlu_enable( device_nr, 1 ) ) error_out( "###tlu_enable" );
+      if( !spidrctrl->setTluEnable( device_nr, 1 ) ) error_out( "###setTluEnable" );
+
+//#define TPX3_STORE_TXT
       
 #ifdef TPX3_STORE_TXT
       // Some output files for debugging
-      FILE *ft, *fp, *fa, *fd;
+      FILE *ft, *fa, *fd;
       ft = fopen("trg.txt","w");
-      fp = fopen("pix.txt","w");
       fa = fopen("all.txt","w");
       fd = fopen("diff.txt","w");
 #endif
@@ -522,44 +557,63 @@ class Timepix3Producer : public eudaq::Producer {
       trigger_vec.reserve( 10000000 );
       int last_trg_timestamp=0;
       uint64_t unfolded_timestamp=0;
-      uint64_t last_fpga_ts=0;
+      int last_fpga_ts=0x00000; //SAMIR: was 0x10000
       const uint64_t TIMER_EPOCH = 0x40000000;
       int cnt = 0;      
       while( !stopping ) {
-
+	
       	int size;
       	bool next_sample = true;
-
+	
       	// Get a sample of pixel data packets, with timeout in ms
       	const unsigned int BUF_SIZE = 8*1024*1024;
       	next_sample = spidrdaq->getSample( BUF_SIZE, 1 );
-
-      	if( next_sample ) {
-
-      	  ++cnt;
-      	  size = spidrdaq->sampleSize();
+	
+	// Log some info
+	if( m_ev >= m_ev_next_update) {
+	  char kmsg[1024]={0};
+	  if( m_use_k2450 == 1 ) {
+	    k2450->SetMeasureCurrent();
+	    double I = k2450->ReadValue() * 1e9;
+	    k2450->SetMeasureVoltage();
+	    double V = k2450->ReadVoltage();
+	    sprintf( kmsg, "[ev %d] Bias Voltage is %.3f V  Current is %.3f nA", m_ev, V, I );
+	  }  
+	  double temp=getTpx3Temperature();
+	  sprintf( &kmsg[strlen(kmsg)], " TPX3 temperature %.2f ", temp );
+	  EUDAQ_USER( kmsg );
+	  m_ev_next_update=m_ev+10000;
+	} 
+	
+	if( next_sample ) {
+	  
+	  ++cnt;
+	  size = spidrdaq->sampleSize();
 	  
 #ifdef TPX3_STORE_TXT
-	  fprintf(fa,"#\n");
+	  fprintf(fa,"# next sample %d\n",size);
 #endif
+	  
+	  const int HALF_EPOCH=0x8000;
+	  
 	  // look inside sample buffer...
 	  while( 1 ) {
 	    
 	    uint64_t data = spidrdaq->nextPacket();
-
-	    // ...until the sample buffer is empty
+	    
+	  // ...until the sample buffer is empty
 	    if( !data ) break;
-
+	    
 	    uint64_t header = data & 0xF000000000000000;
-	    	    
+	    
 	    // Data-driven or sequential readout pixel data header?
 	    if( header == 0xB000000000000000 || header == 0xA000000000000000 ) {
 	      struct PIXEL pixel;
-
+	      
 	      unsigned char x, y, ftoa;
 	      uint64_t pixdata, tot, toa;
 	      uint64_t fpga_ts;
-	      uint64_t pix_ts;
+	      long long pix_ts;
 	      uint64_t dcol, spix, pix;
 	      // doublecolumn * 2
 	      dcol  = (( data & 0x0FE0000000000000 ) >> 52 ); //(16+28+9-1)
@@ -572,163 +626,209 @@ class Timepix3Producer : public eudaq::Producer {
 	      // pixel data
 	      pixdata = (int) (( data & 0x00000FFFFFFF0000 ) >> 16 );
 	      pixel.tot  =  ( pixdata >> 4 ) & 0x3FF;
-
+	      
 	      //printf("x:%03i y:%03i tot:%05i %08x \n",pixel.x,pixel.y,pixel.tot,pixdata);
-
+	      
 	      // timestamp calculation
 	      ftoa = pixdata & 0xF;
 	      toa  = ( pixdata >> 14 ) & 0x3FFF;
 	      fpga_ts = (int) (data & 0x000000000000FFFF);
 	      pix_ts = ( fpga_ts << 14 ) | toa; 
-	      if( fpga_ts < last_fpga_ts - 1 ) 
-		{
-		  unfolded_timestamp+=TIMER_EPOCH;
+	      
+	      if ( (int)fpga_ts < ((int)last_fpga_ts - HALF_EPOCH) ) {
+		unfolded_timestamp+=TIMER_EPOCH;
 #ifdef TPX3_VERBOSE
-		  cout << "-- unfolding (pix) --\n";
+		cout << "-- unfolding (pix) --\n";
 #endif
-		} else if( fpga_ts == last_fpga_ts - 1 ) 
-		{ 
-		  pix_ts-=TIMER_EPOCH;
-		}
+#ifdef TPX3_STORE_TXT
+		fprintf( fa, "# - unfolding (pix) [fpga_ts:%04lu last_fpga_ts:%04lu unfolded_timestamp %lu] -\n", fpga_ts, last_fpga_ts, unfolded_timestamp );
+#endif
+		last_fpga_ts = fpga_ts;
+	      } else if ( (int)fpga_ts >= ((int)last_fpga_ts + HALF_EPOCH) ) {
+		pix_ts -= TIMER_EPOCH;
+	      } else { 
+		last_fpga_ts = fpga_ts;
+	      }
 	      pix_ts += unfolded_timestamp;
 	      pix_ts <<= 4;
 	      pix_ts -= ftoa;
 	      pixel.ts = pix_ts;
-              last_fpga_ts = fpga_ts;
-
+	      
 	      // store PIXEL struct in vector
 	      pixel_vec.push_back( pixel );
-	      
+	      if (pixel_vec.size()>m_maxPixVec)
+	      {
+	         pixel_vec.erase (pixel_vec.begin(),pixel_vec.begin()+m_pixToDel);
+#ifdef TPX3_VERBOSE
+	         std::cout << "Removing pixel data, too much back log!"<< std::endl;
+#endif
+	      }
 	      // print it
 #ifdef TPX3_VERBOSE
-	      printf("[PIXDATA] (%3d,%3d) TOT:%5d TOA:%5d FPGA_TS:%6d       TS:%15llu\n", x , y , tot, toa , fpga_ts, pix_ts);
+	      printf("[PIXDATA] (%3d,%3d) TOT:%5d TOA:%5d FPGA_TS:%6d       TS:%15llu\n", pixel.x , pixel.y , pixel.tot, toa , fpga_ts, pixel.ts );
 #endif
 #ifdef TPX3_STORE_TXT
-	      fprintf(fp,"%d\n",pix_ts);
-	      fprintf(fa,"p\t%d\n",pix_ts);
+	      fprintf(fa,"p %10lu F:%d L:%d \n",pix_ts, fpga_ts, last_fpga_ts);
 #endif
 	    } else if( header == 0x5000000000000000 ) { // Or TLU packet header?
 	      struct TRIGGER trigger;
 	      uint64_t fpga_ts;
 	      unsigned short int_trg_nr, tlu_trg_nr;
-	      uint64_t trg_timestamp;
+	      long long trg_timestamp;
 	      //internal trigger number
 	      trigger.int_nr = (data >> 45) & 0x7FFF;
 	      //TLU trigger number
 	      trigger.tlu_nr = (data >> 30) & 0x7FFF;
-
+	      
 	      //timestamp
 	      trg_timestamp = data & 0x3FFFFFFF;
 	      fpga_ts = (int) ((trg_timestamp>>14) & 0x000000000000FFFF);
-	      if ( fpga_ts < last_fpga_ts-1 )
+	      if ( (int)fpga_ts < ((int)last_fpga_ts - HALF_EPOCH) )
 		{
 		  unfolded_timestamp += TIMER_EPOCH;
 #ifdef TPX3_VERBOSE
 		  cout << "-- unfolding (trg) --\n";
 #endif
-		} else if ( fpga_ts == last_fpga_ts - 1 )
-		{
-		  trg_timestamp-=TIMER_EPOCH;
-		}
+#ifdef TPX3_STORE_TXT
+		  fprintf(fa,"# - unfolding (pix) [fpga_ts:%04lu last_fpga_ts:%04lu] - \n",fpga_ts,last_fpga_ts);
+#endif
+		  last_fpga_ts = fpga_ts;
+		} else if ( fpga_ts >= last_fpga_ts +HALF_EPOCH  )
+		trg_timestamp-=TIMER_EPOCH;
+	      else 
+		last_fpga_ts = fpga_ts;
+	      
 	      trg_timestamp += unfolded_timestamp;
 	      trg_timestamp <<= 4;
 	      trigger.ts = trg_timestamp;
-              last_fpga_ts = fpga_ts;
 	      
 #ifdef TPX3_VERBOSE
-	      printf("[TRGDATA] tlu_id:%5d int_id:%5d                          TS:%15llu\n", tlu_trg_nr , int_trg_nr, trg_timestamp);
+	      printf("[TRGDATA] tlu_id:%5d int_id:%5d                          TS:%15llu\n", trigger.tlu_nr , trigger.int_nr, trigger.ts);
 #endif
 	      // store TRIGGER struct in vector
 	      trigger_vec.push_back( trigger );
-
+	      
 #ifdef TPX3_STORE_TXT
 	      // write in files
-              fprintf(ft,"%d\n",trg_timestamp);
-              fprintf(fa,"t\t%d\n",trg_timestamp);
+	      fprintf(ft,"%5d\t%5d%15lu\n", trigger.tlu_nr , trigger.int_nr, trigger.ts);
+	      fprintf(fa,"t %10lu F:%d L:%d\n", trg_timestamp, fpga_ts, last_fpga_ts);
 #endif
+/*
+	      if (m_ev==0 && trigger_vec.size() > 0 )
+		{
+		  cout << "about to delete pixels for triger 0"<<endl;
+		  
+		  // Mimosa intagration time  is 230us / 25 ns = 9200 CLK @ 40 MHZ = 147200 @ 640 Mhz
+		  const uint64_t MIMOSA_INTEGRATION_TIME = 147200;
+		  unsigned int deleted=0;
+		  pixel_vec.clear();
+		  
+		  // Loop over pixels 
+		  for( int j = 0; j < pixel_vec.size(); ++j )
+		    // check if the time difference is not too big for the first event
+		    if(trigger_vec[0].ts - pixel_vec[j].ts > 2 * MIMOSA_INTEGRATION_TIME) // 2 is a safety factor
+		      {
+			pixel_vec.erase( pixel_vec.begin() + j );
+			j--; // after removing one pixel data packet, need to go back one step in the vector to avoid skipping pixels
+			deleted++;
+		      }
+		  cout << "Number of deleted pixels for triger 0 :"<<deleted<<endl;
+		      
+		  fprintf(fa,"Number of deleted pixels for triger 0 : %d",deleted);
+		}
+*/
+	      // Loop over pixel and trigger vectors
+	      while( trigger_vec.size() > 1 ) {
+		uint64_t start_time=GetTimeus();
+		// Current event
+		eudaq::RawDataEvent ev( EVENT_TYPE, m_run, m_ev );
+		std::vector<unsigned char> bufferTrg;
+		std::vector<unsigned char> bufferPix;
+		
+		// pack( buffer, trg_id ); !! add trigger number and timestamp here !!
+		
+		uint64_t curr_trg_ts = trigger_vec[0].ts;
+		uint64_t next_trg_ts = trigger_vec[1].ts;
+		uint64_t max_pixel_ts = ( next_trg_ts + curr_trg_ts ) / 2;
+		
+		uint64_t curr_tlu_nr = trigger_vec[0].tlu_nr;
+		uint64_t curr_int_nr = trigger_vec[0].int_nr;
+		
+		// pack TLU info in its buffer
+		pack( bufferTrg, curr_trg_ts);
+		pack( bufferTrg, curr_tlu_nr);
+		pack( bufferTrg, curr_int_nr);
+		
+		// and add it to the event
+		ev.AddBlock( 0, bufferTrg );
+#ifdef TPX3_STORE_TXT
+		//fprintf(fd,"#%lu %10lu\n",curr_tlu_nr,curr_trg_ts);
+#endif		
+#ifdef TPX3_VERBOSE
+		uint64_t fpts=0;
+		if (pixel_vec.size()>0) fpts=pixel_vec[0].ts;
+		printf("\n=> processing tr_id %5d  ts: %15lu max_ts: %15lu next_trg_ts: %15lu  (pix vec size: %d, first pix ts: %lu)\n", trigger_vec[0].tlu_nr,curr_trg_ts, max_pixel_ts, next_trg_ts , pixel_vec.size(),fpts);
+		
+#endif		
+		
+		// Loop over pixels 
+		for( int j = 0; j < pixel_vec.size(); ++j ) {
+		  uint64_t curr_pix_ts = pixel_vec[j].ts;
+		  if( curr_pix_ts < max_pixel_ts ) {
+		    
+#ifdef TPX3_STORE_TXT
+		    long long diff = (long long)curr_trg_ts - (long long)curr_pix_ts;
+		    fprintf(fd,"%lld\n",diff);
+#endif
+#ifdef TPX3_VERBOSE
+		    printf("                        +  ts: %15lu diff: %15ld  (pix %3d,%3d)\n", curr_pix_ts, diff, pixel_vec[j].x, pixel_vec[j].y );
+#endif
+		    // Pack pixel data into event buffer
+		    pack( bufferPix, pixel_vec[j].x );
+		    pack( bufferPix, pixel_vec[j].y );
+		    pack( bufferPix, pixel_vec[j].tot );
+		    pack( bufferPix, pixel_vec[j].ts );
+		    
+		    pixel_vec.erase( pixel_vec.begin() + j );
+		    j--; // after removing one pixel data packet, need to go back one step in the vector to avoid skipping pixels
+		  }
+		  else if( curr_pix_ts > next_trg_ts ) {
+#ifdef TPX3_VERBOSE
+		    printf("                        -> break! (%lu > %lu , diff:%ld)\n",curr_pix_ts,next_trg_ts,curr_pix_ts-next_trg_ts  );
+#endif	
+		    break;
+		  }
+		}
+		
+		// Remove trigger from vector
+		trigger_vec.erase( trigger_vec.begin() );
+		// Add buffer to block
+		ev.AddBlock( 1, bufferPix );
+		// Send the event to the Data Collector      
+		SendEvent(ev);
+		
+		uint64_t stop_time=GetTimeus();
+		uint64_t dt=stop_time-start_time;
+		printf("[ev:%6u|tlu:%5lu] Pixels:%5lu Buildtime:%6luus Pixels left:%6lu\n",m_ev,curr_tlu_nr,bufferPix.size(),dt,pixel_vec.size());
+		fflush( stdout ); 
+		// Now increment the event number
+		m_ev++;
+	      }
 	    }
 	  } // End loop over sample buffer
 	  
-	  // If sample buffer is empty, look at available  data and try to build events
-	  unsigned int trg_built = 0;
-	  
-	  // Loop over pixel and trigger vectors
-	  while( trigger_vec.size() > 1 ) {
-	    // Current event
-	    eudaq::RawDataEvent ev( EVENT_TYPE, m_run, m_ev );
-	    std::vector<unsigned char> bufferTrg;
-	    std::vector<unsigned char> bufferPix;
-	    
-	    // pack( buffer, trg_id ); !! add trigger number and timestamp here !!
-	    
-	    uint64_t curr_trg_ts = trigger_vec[0].ts;
-	    uint64_t next_trg_ts = trigger_vec[1].ts;
-	    uint64_t max_pixel_ts = ( next_trg_ts + curr_trg_ts ) / 2;
-
-	    uint64_t curr_tlu_nr = trigger_vec[0].tlu_nr;
-	    uint64_t curr_int_nr = trigger_vec[0].int_nr;
-	    
-	    // pack TLU info in its buffer
-	    pack( bufferTrg, curr_trg_ts);
-	    pack( bufferTrg, curr_tlu_nr);
-	    pack( bufferTrg, curr_int_nr);
-
-	    // and add it to the event
-	    ev.AddBlock( 0, bufferTrg );
-
-#ifdef TPX3_VERBOSE
-	    uint64_t fpts=0;
-	    if (pixel_vec.size()>0) fpts=pixel_vec[0].ts;
-	    printf("\n=> processing tr_id %5d  ts: %15llu max_ts: %15llu next_trg_ts: %15llu  (pix vec size: %d, first pix ts: %llu)\n", trigger_vec[0].tlu_nr,curr_trg_ts, max_pixel_ts, next_trg_ts , pixel_vec.size(),fpts);
-
-#endif		
-	    // Loop over pixels 
-	    for( int j = 0; j < pixel_vec.size(); ++j ) {
-	      uint64_t curr_pix_ts = pixel_vec[j].ts;
-	      if( curr_pix_ts < max_pixel_ts ) {
-		
-#ifdef TPX3_STORE_TXT
-		long long diff = (long long)curr_trg_ts - (long long)curr_pix_ts;
-		fprintf(fd,"%lld\n",diff);
-#endif
-#ifdef TPX3_VERBOSE
-		printf("                        +  ts: %15llu diff: %15lld  (pix %3d,%3d)\n", curr_pix_ts, diff, pixel_vec[j].x, pixel_vec[j].y );
-#endif
-		// Pack pixel data into event buffer
-		pack( bufferPix, pixel_vec[j].x );
-		pack( bufferPix, pixel_vec[j].y );
-		pack( bufferPix, pixel_vec[j].tot );
-		pack( bufferPix, pixel_vec[j].ts );
-		
-		pixel_vec.erase( pixel_vec.begin() + j );
-		j--; // after removing one pixel data packet, need to go back one step in the vector to avoid skipping pixels
-	      }
-	      else if( curr_pix_ts > next_trg_ts ) {
-#ifdef TPX3_VERBOSE
-                printf("                        -> break! (%llu > %llu , diff:%llu)\n",curr_pix_ts,next_trg_ts,curr_pix_ts-next_trg_ts  );
-#endif	
-		break;
-	      }
-	    }
-	    
-	    // Remove trigger from vector
-	    trigger_vec.erase( trigger_vec.begin() );
-	    // Add buffer to block
-	    ev.AddBlock( 1, bufferPix );
-	    // Send the event to the Data Collector      
-	    SendEvent(ev);
-	    // Now increment the event number
-	    m_ev++;
-	    trg_built++;
-	  }
-	  float size_proc = size*100.0/BUF_SIZE;
-	  printf( "%c [%10d] Size %7d [%6.2f%%] Triggers %5d  Pixels %6lu       ", 13, cnt, size, size_proc, trg_built, pixel_vec.size() );
+	  printf("Pixels left: %5lu Triggers:%5lu\n",pixel_vec.size(), trigger_vec.size());
 	  fflush( stdout ); 
+#ifdef TPX3_STORE_TXT
+	  fprintf(fa,"Pixels left: %5lu Triggers:%5lu\n",pixel_vec.size(), trigger_vec.size());
+#endif
+	  //	  float size_proc = size*100.0/BUF_SIZE;
+	  //	  printf( "%c [%10d] Ev %7d Size %7d [%6.2f%%] Triggers %5d  Pixels %6lu       ", 13, cnt, m_ev, size, size_proc, trg_built, pixel_vec.size() );
+	  //	  fflush( stdout ); 
 	}
       }      
-
+      
 #ifdef TPX3_STORE_TXT
-      fclose(fp);
       fclose(ft);
       fclose(fa);
       fclose(fd);
@@ -736,9 +836,9 @@ class Timepix3Producer : public eudaq::Producer {
       
       // Guess what this does?
       spidrctrl->closeShutter();
-
+      
       // Disble TLU
-      if( !spidrctrl->tlu_enable( device_nr, 0 ) ) error_out( "###tlu_enable" );
+      if( !spidrctrl->setTluEnable( device_nr, 0 ) ) error_out( "###setTluEnable" );
 
       // Clean up
       delete spidrdaq;
@@ -764,6 +864,7 @@ private:
   int m_xml_VTHRESH;
   int m_do_threshold_scan, m_threshold_start, m_threshold_step, m_threshold_max, m_threshold_return, m_threshold_count;
   float m_temp;
+  int m_maxPixVec, m_pixToDel;
 };
 
 

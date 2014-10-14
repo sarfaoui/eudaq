@@ -36,8 +36,8 @@ public:
 	}
 	void MainLoop() {
 		
-		FILE *ftlu;
-		ftlu = fopen("/home/vertextb/eudaq/build/tlu.txt","w");
+	  //FILE *ftlu;
+	  //	ftlu = fopen("/home/vertextb/eudaq/build/tlu.txt","w");
 
 		do {
 	
@@ -68,8 +68,8 @@ public:
 					if (m_ev < 10 || m_ev % 1000 == 0) {
 						std::cout << "  " << m_tlu->GetEntry(i) << ", diff=" << d << (d <= 0 ? "  ***" : "") << ", freq=" << freq << std::endl;
 					}
-					fprintf(ftlu,"%d\t%ld\n",m_ev,t);
-					fflush(ftlu);
+					//fprintf(ftlu,"%d\t%ld\n",m_ev,t);
+					//fflush(ftlu);
 					lasttime = t;
 					TLUEvent ev(m_run, m_ev, t);
 					ev.SetTag("trigger",m_tlu->GetEntry(i).trigger2String());
@@ -95,7 +95,7 @@ public:
 			}
 		} while (!done);
 		
-		fclose(ftlu);
+		//fclose(ftlu);
 		
 	}
 	virtual void OnConfigure(const eudaq::Configuration & param) {

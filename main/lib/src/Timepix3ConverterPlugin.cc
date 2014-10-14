@@ -50,7 +50,7 @@ namespace eudaq {
 	  // [8->9]: TLU trigger number
 	  // [10->11] SPIDR internal trigger number
 
-	  return ( data[8] | data[9] );
+	  return ( data[8] | (data[9] << 8) );  // fix DD October 5: shift MSB element by 8 bits (was missing!)
 	}
       }
       // If we are unable to extract the Trigger ID, signal with (unsigned)-1
@@ -98,7 +98,7 @@ namespace eudaq {
 
 	offset += sizeof( aWord ) * PIX_SIZE; 
 
-	std::cout << "[DATA] "  << " " << (int)ZSDataX[i] << " " << (int)ZSDataY[i] << " " << ZSDataTOT[i] << " " << ZSDataTS[i] << std::endl;
+//	std::cout << "[DATA] "  << " " << (int)ZSDataX[i] << " " << (int)ZSDataY[i] << " " << ZSDataTOT[i] << " " << ZSDataTS[i] << std::endl;
 
       }
 
@@ -106,7 +106,7 @@ namespace eudaq {
       plane.SetTLUEvent( GetTriggerID(ev) );
       
       for( size_t i = 0 ; i < ZSDataX.size(); ++i ) {
-	plane.PushPixel( ZSDataX[i], ZSDataY[i], ZSDataTOT[i] );
+	plane.SetPixel( i, ZSDataX[i], ZSDataY[i], ZSDataTOT[i] );
       }
 
       // Add the plane to the StandardEvent
